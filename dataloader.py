@@ -1,8 +1,6 @@
 import os
 import random
-import skvideo.io 
-import cv2
-
+from decord import VideoReader, cpu
 import numpy as np
 import torch
 from torch.utils.data import Dataset, DataLoader
@@ -67,15 +65,9 @@ class NTU_RGBD_120(Dataset):
     def __getitem__(self, index):
         video = self.videos[index]
         #frames = skvideo.io.vread(os.path.join(self.videos_folder, video), self.height, self.width, self.num_frames) 
-        frames = []
-        vcap = cv2.VideoCapture(os.path.join(self.videos_folder, video))
-        while True:
-            success, image = vcap.read()
-            if success:
-                frames.append(image)
-            else:
-                break
-        frames = np.array(frames, dtype=np.float32)
+        vr = VideoReader(os.path.join(self.videos_folder, video), width=self.width, height=self.height, ctx=cpu(0))
+        frames = vr.get_batch(range(0, len(vr)))
+        frames = np.array(frames.asnumpy(), dtype=np.float32)
         label = self.subjects.index(video[8:12])
         s_num, cam_id, sub_id, rep_num, act_id = video[0:4], video[4:8], video[8:12], video[12:16], video[16:20]
         frames = torch.from_numpy(frames).permute(3, 0, 1, 2).float()

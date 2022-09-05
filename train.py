@@ -4,7 +4,7 @@ from unittest.mock import CallableMixin
 import warnings
 import random
 warnings.filterwarnings("ignore")
-
+os.environ['CUDA_LAUNCH_BLOCKING'] = "1"
 import numpy as np
 from tqdm import tqdm
 
@@ -182,6 +182,25 @@ def val_epoch(epoch, data_loader, model, writer, use_cuda, args):
             label.append(_label)
             seq_type.append('_'.join([rep_num, _cam_id, s_num]))
             action.append(_action)
+            _feature = results[key]
+            feature.append(_feature)
+        feature = np.array(feature).squeeze()
+        label = np.array(label)
+        accuracy = compute_metric(feature, label, action, seq_type, probe_seqs, gallery_seqs)
+        top_1_accuracy = np.mean(accuracy[:, :, :, 0])
+        print('Validation Epoch: %d, Top-1 Accuracy: %.4f' % (epoch, top_1_accuracy), flush=True)
+        writer.add_scalar('Validation Top-1 Accuracy', top_1_accuracy, epoch)
+        metric = top_1_accuracy
+        return metric
+    elif args.dataset == 'pkummd':
+        probe_seqs = [['L_', 'R_']]
+        gallery_seqs = [['M_']]
+        feature, seq_type, action, label = [], [], [], []
+        for key in results.keys():
+            act_id, sub_id, pov = key.split('_')
+            label.append(sub_id)
+            seq_type.append('_'.join([pov]))
+            action.append(act_id)
             _feature = results[key]
             feature.append(_feature)
         feature = np.array(feature).squeeze()

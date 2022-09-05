@@ -67,7 +67,7 @@ if __name__ == '__main__':
 
     parser.add_argument('--run_description', dest='run_description', type=str, required=False, help='Please description of the run to write to log')
 
-    parser.add_argument('--dataset', type=str, required=True, help='Dataset to use.', choices=["ntu_rgbd_120", "pku_mmd"])
+    parser.add_argument('--dataset', type=str, required=True, help='Dataset to use.', choices=["ntu_rgbd_120", "pkummd"])
 
     parser.add_argument('--model_version', type=str, required=True, help='Specify the model version to use for transformer.', 
                         choices=["baseline"])

@@ -31,7 +31,7 @@ from torchvision.transforms import (
     RandomHorizontalFlip,
 )
 
-from dataloader import NTU_RGBD_120
+from dataloader import NTU_RGBD_120, PKUMMDv2
 from model import build_model
 
 
@@ -232,8 +232,8 @@ def train_model(cfg, run_id, save_dir, use_cuda, args, writer):
         ]
     )
 
-    train_data_gen = NTU_RGBD_120(cfg, args.input_type, 'train', 1.0, args.num_frames, skip=skip, transform=transform_train)
-    val_data_gen = NTU_RGBD_120(cfg, args.input_type, 'test', 1.0, args.num_frames, skip=skip, transform=transform_test)
+    train_data_gen = PKUMMDv2(cfg, args.input_type, 'train', 1.0, args.num_frames, skip=skip, transform=transform_train)
+    val_data_gen = PKUMMDv2(cfg, args.input_type, 'test', 1.0, args.num_frames, skip=skip, transform=transform_test)
     
     train_dataloader = DataLoader(train_data_gen, batch_size=args.batch_size, shuffle=shuffle, num_workers=args.num_workers)
     

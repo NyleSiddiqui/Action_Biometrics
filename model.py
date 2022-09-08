@@ -1,10 +1,10 @@
+import torch
+from torch import nn
 import torch.optim as optim
 from torch.autograd import Variable
 from torch.optim import lr_scheduler
 from torch.nn.init import kaiming_uniform_
-import torch
 import torchvision.models.video as video_models
-from torch import nn
 from torch.nn import functional as F
 import math
 import numpy as np

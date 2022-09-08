@@ -31,6 +31,9 @@ from torchvision.transforms import (
     RandomHorizontalFlip,
 )
 
+print(torch.__version__)
+
+
 from dataloader import NTU_RGBD_120, PKUMMDv2
 from model import build_model
 
@@ -58,7 +61,7 @@ def compute_metric(feature, label, action, seq_type, probe_seqs, gallery_seqs):
     action_list = list(set(action))
     action_list.sort()
     action_num = len(action_list)
-    num_rank = 5
+    num_rank = 2
     acc = np.zeros([len(probe_seqs), action_num, action_num, num_rank])
     for (p, probe_seq) in enumerate(probe_seqs):
         for gallery_seq in gallery_seqs:
@@ -193,8 +196,8 @@ def val_epoch(epoch, data_loader, model, writer, use_cuda, args):
         metric = top_1_accuracy
         return metric
     elif args.dataset == 'pkummd':
-        probe_seqs = [['L_', 'R_']]
-        gallery_seqs = [['M_']]
+        probe_seqs = [['L', 'R']]
+        gallery_seqs = [['M']]
         feature, seq_type, action, label = [], [], [], []
         for key in results.keys():
             act_id, sub_id, pov = key.split('_')

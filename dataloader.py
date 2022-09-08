@@ -27,7 +27,7 @@ class NTU_RGBD_120(Dataset):
     def __init__(self, cfg, input_type, data_split, data_percentage, num_frames, height=270, width=480, skip=0, shuffle=True, transform=None, visualizations=False):
         self.data_split = data_split
         self.num_subjects = cfg.num_subjects
-        self.videos_folder = cfg.videos_folder
+        self.videos_folder = '/home/c3-0/datasets/NTU_RGBD_120/nturgb+d_rgb'  #cfg.videos_folder
         assert data_split in ['train', 'test']
         assert input_type in ['rgb']
         self.videos, self.subjects = [], []
@@ -61,6 +61,16 @@ class NTU_RGBD_120(Dataset):
         self.width = width
         self.skip = skip
         self.transform = transform
+        
+        if visualizations:
+            for i in range(70, 107):
+                print(i)
+                for video in os.listdir(self.videos_folder):
+                    if f"P0{i}" in video or f"P{i}" in video:
+                        vid = cv2.VideoCapture(os.path.join(self.videos_folder, video))
+                        success, image = vid.read()
+                        print(success)
+                        cv2.imwrite(f"Subject{i}Action{video[17:20]}.jpg", image)
         
         
     def __len__(self):
@@ -139,7 +149,7 @@ class PKUMMDv2(Dataset):
 
 if __name__ == '__main__':
     shuffle = False
-    cfg = build_config('ntu_rgbd_120')
+    cfg = build_config('pkummd')
     transform_train = Compose(
                 [
                     UniformTemporalSubsample(32),
@@ -162,7 +172,7 @@ if __name__ == '__main__':
                     CenterCrop(224)
                 ]
             )
-    data_generator = NTU_RGBD_120(cfg, 'rgb', 'test', 1.0, 128, skip=0, shuffle=shuffle, transform=transform_test, visualizations=True)
+    data_generator = PKUMMDv2(cfg, 'rgb', 'train', 1.0, 128, skip=0, shuffle=shuffle, transform=transform_test, visualizations=True)
     dataloader = DataLoader(data_generator, batch_size=4, shuffle=False, num_workers=4)
     for i, (clips, targets, keys) in enumerate(dataloader):
         clips = clips.data.numpy()

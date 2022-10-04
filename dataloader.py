@@ -253,7 +253,7 @@ class nNTU_RGBD_120(Dataset):
             frames = self.transform(frames)
         frames = frames.transpose(0, 1)
         
-        same_act_vid = random.choice([a for a in self.videos if a[16:20] == act_id and a != video])
+        same_act_vid = random.choice([a for a in self.videos if a[16:20] == act_id and a != video and a[12:16] == rep_num])
         same_act_vid = VideoReader(os.path.join(self.videos_folder, same_act_vid), width=self.width, height=self.height, ctx=cpu(0))
         same_act_vid = same_act_vid.get_batch(range(0, len(same_act_vid)))
         same_act_vid = np.array(same_act_vid.asnumpy(), dtype=np.float32)
@@ -262,7 +262,7 @@ class nNTU_RGBD_120(Dataset):
              same_act_vid = self.transform(same_act_vid)
         same_act_vid =  same_act_vid.transpose(0, 1)
         
-        same_sub_vid = random.choice([a for a in self.videos if a[8:12] == sub_id and a != video])
+        same_sub_vid = random.choice([a for a in self.videos if a[8:12] == sub_id and a != video and a[12:16] == rep_num])
         same_sub_vid = VideoReader(os.path.join(self.videos_folder, same_sub_vid), width=self.width, height=self.height, ctx=cpu(0))
         same_sub_vid = same_sub_vid.get_batch(range(0, len(same_sub_vid)))
         same_sub_vid = np.array(same_sub_vid.asnumpy(), dtype=np.float32)

@@ -1,4 +1,5 @@
 from PIL import Image
+import csv
 import os
 import shutil
 import random
@@ -23,8 +24,99 @@ from pytorchvideo.transforms import (
 )
 
 
+class omniDataLoader(Dataset):
+    def __init__(self, cfg, input_type, data_split, data_percentage, num_frames, height=270, width=480, skip=0, shuffle=True, transform=None):
+        self.dataset = cfg.dataset
+        if self.dataset != "charades":
+            self.num_subjects = cfg.num_subjects
+        self.data_split = data_split
+        self.videos_folder = cfg.videos_folder
+        if data_split == "train":
+           self.annotations = cfg.train_annotations
+        else:
+           self.annotations = cfg.test_annotations
+        self.videos = []
+        self.subjects = []
+        for row in open(self.annotations, 'r').readlines()[1:]:
+           if len(row.split(',')) == 6:
+             video_id, subject, action, placeholder1, placeholder2, placeholder3 = row.split(',')
+             self.videos.append([video_id, subject, action, placeholder1, placeholder2, placeholder3])
+             if subject not in self.subjects:
+                 self.subjects.append(subject)
+        if shuffle:
+            random.shuffle(self.videos)
+        self.height = height
+        self.width = width
+        self.skip = skip
+        self.transform = transform
+        self.num_frames = num_frames
+        
+    def __len__(self):
+        return len(self.videos)
+    
+    def __getitem__(self, index):
+        row = self.videos[index]
+        video_id, subject, action = row[0], row[1], row[2]
+               
+        if self.dataset == "charades":
+            start_timestamp, end_timestamp, scene = float(row[3]), float(row[4]), row[5]
+            total_frames = len(os.listdir(os.path.join(self.videos_folder, video_id)))
+            start_frame = max(1, int(start_timestamp * 24))
+            if start_frame > total_frames:
+                return None, None, None, None
+            end_frame = min(total_frames, int(end_timestamp * 24))
+            frame_ids = np.linspace(start_frame, end_frame, self.num_frames).astype(int)
+            frames = []
+            for frame_id in frame_ids:
+                f = os.path.join(self.videos_folder, video_id, video_id + '-' + str(frame_id).zfill(6) + '.jpg')
+                frame = cv2.imread(f)
+                if frame is None:
+                    continue
+                frames.append(frame)
+            if len(frames) != self.num_frames:
+                return None, None, None
+            frames = np.array(frames, dtype=np.float32)
+            frames = torch.from_numpy(frames).permute(3, 0, 1, 2).float()
+            if self.transform:
+                frames = self.transform(frames)
+            frames = frames.transpose(0, 1)
+            int_subject = self.subjects.index(subject)
+            return frames, int_subject, int(action), '_'.join([subject, video_id, action, scene])
+            
+        elif self.dataset == 'ntu_rgbd_120':
+            camera, rep, setup = row[3], row[4], row[5]
+            vr = VideoReader(os.path.join(self.videos_folder, video_id))
+            frames = vr.get_batch(range(0, len(vr)))
+            frames = np.array(frames.asnumpy(), dtype=np.float32)
+            frames = torch.from_numpy(frames).permute(3, 0, 1, 2)
+            if self.transform:
+                frames = self.transform(frames)
+            frames = frames.transpose(0, 1)
+            return frames, int(subject), int(action), '_'.join([subject, video_id, action, camera, rep, setup])
+            
+        elif self.dataset == 'pkummd':
+            start_frame, end_frame, confidence = int(row[3]), int(row[4]), row[5]
+            video_id = f"{video_id}.avi"
+            vr = VideoReader(os.path.join(self.videos_folder, video_id))
+            total_frames = len(vr)
+            if total_frames == end_frame:
+              frames = vr.get_batch(range(start_frame, end_frame))
+            else:
+              frames = vr.get_batch(range(start_frame, end_frame+1))
+            frames = np.array(frames.asnumpy(), dtype=np.float32)
+            frames = torch.from_numpy(frames).permute(3, 0, 1, 2)
+            if self.transform:
+                try:
+                  frames = self.transform(frames)
+                except AssertionError:
+                    print(frames.shape, row, total_frames, flush=True)
+            frames = frames.transpose(0, 1)
+            return frames, int(subject), int(action), '_'.join([subject, video_id, action, confidence[0]])
+    
+
 class NTU_RGBD_120(Dataset):
     def __init__(self, cfg, input_type, data_split, data_percentage, num_frames, height=270, width=480, skip=0, shuffle=True, transform=None, visualizations=False):
+        count = 0
         self.data_split = data_split
         self.num_subjects = cfg.num_subjects
         self.videos_folder = cfg.videos_folder
@@ -68,6 +160,7 @@ class NTU_RGBD_120(Dataset):
 
 
     def __getitem__(self, index):
+        count = 0
         video = self.videos[index]
         #frames = skvideo.io.vread(os.path.join(self.videos_folder, video), self.height, self.width, self.num_frames) 
         vr = VideoReader(os.path.join(self.videos_folder, video), width=self.width, height=self.height, ctx=cpu(0))
@@ -142,16 +235,13 @@ class PKUMMDv1(Dataset):
     def __init__(self, cfg, input_type, data_split, data_percentage, num_frames, height=180, width=320, skip=0, shuffle=True, transform=None):
         self.data_split = data_split
         assert data_split in ['train', 'test']
-        self.frames_folder = cfg.frames_folder
-        self.fps = cfg.fps
+        self.frames_folder = cfg.videos_folder
         self.input_type = input_type
         self.videos = []
-        self.subjects = []
-        self.actions = []
         if data_split == 'train':
-            annotation_file = cfg.train_file
+            annotation_file = cfg.train_annotations
         else:
-            annotation_file = cfg.test_file
+            annotation_file = cfg.test_annotations
         self.subject_to_videos = {}
         for line in open(annotation_file, 'r').readlines()[1:]:
             try:
@@ -159,17 +249,9 @@ class PKUMMDv1(Dataset):
                 video_id = f"{video_id}.avi"
             except ValueError:
                 continue
-            if subject_id not in self.subject_to_videos:
-                self.subject_to_videos[subject_id] = []
-            if video_id not in self.subject_to_videos[subject_id]:
-                self.subject_to_videos[subject_id].append(video_id)
             self.videos.append([video_id,  int(action_id), int(start_frame), int(end_frame), int(confidence), subject_id])
-            self.subjects.append(subject_id)
-            self.actions.append(int(action_id))
         if shuffle:
             random.shuffle(self.videos)
-        self.subjects = list(set(self.subjects))
-        self.actions = list(set(self.actions))
         len_data = int(len(self.videos) * data_percentage)
         self.videos = self.videos[0:len_data]
         self.num_frames = num_frames
@@ -190,9 +272,7 @@ class PKUMMDv1(Dataset):
         if self.transform:
             frames = self.transform(frames)
         frames = frames.transpose(0, 1)
-        label = self.subjects.index(subject_id)
-        action_label = self.actions.index(action_id)
-        return frames, label, action_label, '_'.join([subject_id, video_id, str(action_id)])
+        return frames, int(label), int(action_label), '_'.join([subject_id, video_id, action_id])
         
 class nNTU_RGBD_120(Dataset):
     def __init__(self, cfg, input_type, data_split, data_percentage, num_frames, height=270, width=480, skip=0, shuffle=True, transform=None, visualizations=False):

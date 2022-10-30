@@ -13,11 +13,12 @@ import torch
 from torch import nn
 import torch.nn.functional as F
 from torch.autograd.variable import Variable
-from torch.nn import BCEWithLogitsLoss, CrossEntropyLoss
+from torch.nn import BCEWithLogitsLoss, CrossEntropyLoss, TripletMarginLoss
 from torch.optim.lr_scheduler import *
 from torch.utils.data import DataLoader
 from torchvision.transforms import transforms
 from torchvision.utils import make_grid
+from torchvision.models.feature_extraction import create_feature_extractor, get_graph_node_names
 from pytorchvideo.transforms import (
     Normalize,
     RandomShortSideScale,
@@ -31,10 +32,8 @@ from torchvision.transforms import (
     RandomHorizontalFlip,
 )
 
-print(torch.__version__)
-
-
-from dataloader import NTU_RGBD_120, PKUMMDv2
+from dataloader import omniDataLoader, default_collate
+from custom_transforms import ColorJitterVideo
 from model import build_model
 
 
@@ -61,7 +60,7 @@ def compute_metric(feature, label, action, seq_type, probe_seqs, gallery_seqs):
     action_list = list(set(action))
     action_list.sort()
     action_num = len(action_list)
-    num_rank = 2
+    num_rank = 1
     acc = np.zeros([len(probe_seqs), action_num, action_num, num_rank])
     for (p, probe_seq) in enumerate(probe_seqs):
         for gallery_seq in gallery_seqs:
@@ -98,50 +97,106 @@ def cuda_dist(x, y):
     return dist
 
 
-def train_epoch(epoch, data_loader, model, optimizer, ema_optimizer, criterion, writer, use_cuda, accumulation_steps=1):
+def train_epoch(epoch, data_loader, model, optimizer, ema_optimizer, criterion, writer, use_cuda, flag, args, accumulation_steps=1):
     print('train at epoch {}'.format(epoch), flush=True)
-
+    count = 0
     losses = []
+    supervised_sub_losses = []
+    supervised_act_losses = []
+    ss_contrastive_losses = []
+    sa_contrastive_losses = []
 
     model.train()
 
-    for i, (clips, targets, _) in enumerate(tqdm(data_loader)):
-        assert len(clips) == len(targets)
-
-        if use_cuda:
-            clips = Variable(clips.type(torch.FloatTensor)).cuda()
-            targets = Variable(targets.type(torch.LongTensor)).cuda()
-        else:
-            clips = Variable(clips.type(torch.FloatTensor))
-            targets = Variable(targets.type(torch.LongTensor))
-
-        optimizer.zero_grad()
-
-        outputs, features = model(clips)
-
-        loss = criterion(outputs, targets)
-   
-        losses.append(loss.item())
-
-        loss = loss / accumulation_steps
-
-        loss.backward()
-
-        if (i+1) % accumulation_steps == 0:
-            optimizer.step()
-            optimizer.zero_grad()
-            ema_optimizer.step()
-
-        losses.append(loss.item())
-
-        del loss, outputs, clips, targets
-
-    print('Training Epoch: %d, Loss: %.4f' % (epoch, np.mean(losses)), flush=True)
-
-    writer.add_scalar('Training Loss', np.mean(losses), epoch)
+    if flag:
+        for i, (clips, ss_clips, sa_clips, targets, actions, _) in enumerate(tqdm(data_loader)):
+            assert len(clips) == len(targets)
     
-    return model
+            if use_cuda:
+                clips = Variable(clips.type(torch.FloatTensor)).cuda()
+                ss_clips = Variable(ss_clips.type(torch.FloatTensor)).cuda()
+                sa_clips = Variable(sa_clips.type(torch.FloatTensor)).cuda()
+                targets = Variable(targets.type(torch.LongTensor)).cuda()
+                actions = Variable(actions.type(torch.LongTensor)).cuda()
+            else:
+                clips = Variable(clips.type(torch.FloatTensor))
+                ss_clips = Variable(ss_clips.type(torch.FloatTensor))
+                sa_clips = Variable(sa_clips.type(torch.FloatTensor))
+                targets = Variable(targets.type(torch.LongTensor))
+                actions = Variable(actions.type(torch.LongTensor))
+    
+            optimizer.zero_grad()
+            
+            output_subjects, output_actions, features, act_features = model(clips)
+            _, _, ss_features, ss_act_features = model(ss_clips)
+            _, _, sa_features,  sa_act_features = model(sa_clips)
+            
+            ss_contrastive_loss = nn.TripletMarginLoss()(features, ss_features, sa_features)
+            sa_contrastive_loss = nn.TripletMarginLoss()(features, sa_features, ss_features)
+            sub_loss = criterion(output_subjects, targets)
+            act_loss = criterion(output_actions, actions)
+            loss = sub_loss + act_loss + ss_contrastive_loss + sa_contrastive_loss
+            
+            supervised_sub_losses.append(sub_loss.item())
+            supervised_act_losses.append(act_loss.item())
+            ss_contrastive_losses.append(ss_contrastive_loss.item())
+            sa_contrastive_losses.append(sa_contrastive_loss.item())
+            losses.append(loss.item())
+            loss = loss / accumulation_steps
+            loss.backward()             
+            
+            if (i+1) % accumulation_steps == 0:
+                optimizer.step()
+                optimizer.zero_grad()
+                ema_optimizer.step()
+                
+            losses.append(loss.item())
+            
+    
+            del sub_loss, act_loss, loss, output_subjects, output_actions, features, act_features, ss_features, ss_act_features, sa_features, sa_act_features, clips, ss_clips, sa_clips, targets
+            
+    else:
+        for i, (clips, targets, _, _) in enumerate(tqdm(data_loader)):
+            assert len(clips) == len(targets)
+    
+            if use_cuda:
+                clips = Variable(clips.type(torch.FloatTensor)).cuda()
+                targets = Variable(targets.type(torch.LongTensor)).cuda()
+            else:
+                clips = Variable(clips.type(torch.FloatTensor))
+                targets = Variable(targets.type(torch.LongTensor))
+    
+            optimizer.zero_grad()
+            
+            outputs, features = model(clips)
+            
+            loss = criterion(outputs, targets)
+       
+            losses.append(loss.item())
+    
+            loss = loss / accumulation_steps
+    
+            loss.backward()
+    
+            if (i+1) % accumulation_steps == 0:
+                optimizer.step()
+                optimizer.zero_grad()
+                ema_optimizer.step()
 
+            losses.append(loss.item())
+    
+            del loss, outputs, clips, targets, features
+            
+    print('Training Epoch: %d, Loss: %.4f, SL: %.4f, AL: %.4f, SCL: %.4f, ACL: %.4f' % (epoch, np.mean(losses), np.mean(supervised_sub_losses),  np.mean(supervised_act_losses), np.mean(ss_contrastive_losses), np.mean(sa_contrastive_losses)), flush=True)
+            
+    writer.add_scalar('Training Loss', np.mean(losses), epoch)
+    writer.add_scalar('Subject Loss', np.mean(supervised_sub_losses), epoch)
+    writer.add_scalar('Action Loss', np.mean(supervised_act_losses), epoch)
+    writer.add_scalar('Subject Contrastive Loss', np.mean(ss_contrastive_losses), epoch)
+    writer.add_scalar('Action Contrastive Loss', np.mean(sa_contrastive_losses), epoch)
+      
+    return model
+      
 
 def val_epoch(epoch, data_loader, model, writer, use_cuda, args):
     print('validation at epoch {}'.format(epoch))
@@ -149,7 +204,7 @@ def val_epoch(epoch, data_loader, model, writer, use_cuda, args):
     model.eval()
 
     results = {}
-    for i, (clips, labels, keys) in enumerate(tqdm(data_loader)):
+    for i, (clips, labels, action, keys) in enumerate(tqdm(data_loader)):
         clips = Variable(clips.type(torch.FloatTensor))
         labels =  Variable(labels.type(torch.FloatTensor))
         
@@ -159,14 +214,16 @@ def val_epoch(epoch, data_loader, model, writer, use_cuda, args):
             if use_cuda:
                 clips = clips.cuda()
                 labels = labels.cuda()
-            
-            _, features = model(clips)
+            if args.model_version == 'v1' or args.model_version == 'v2':
+                output_subjects, output_actions, features, act_features = model(clips)
+            else:
+                _, features = model(clips)
 
             for i, feature in enumerate(features):
                 if keys[i] not in results:
                     results[keys[i]] = []
                 results[keys[i]].append(feature.cpu().data.numpy())
-    
+        
     if args.dataset == 'ntu_rgbd_120':
         probe_seqs = [
                         ['R002_C001_S026', 'R002_C001_S027', 'R002_C001_S028', 'R002_C001_S029', 'R002_C001_S030', 'R002_C001_S031', 'R002_C001_S032'], 
@@ -192,18 +249,19 @@ def val_epoch(epoch, data_loader, model, writer, use_cuda, args):
         accuracy = compute_metric(feature, label, action, seq_type, probe_seqs, gallery_seqs)
         top_1_accuracy = np.mean(accuracy[:, :, :, 0])
         print('Validation Epoch: %d, Top-1 Accuracy: %.4f' % (epoch, top_1_accuracy), flush=True)
-        writer.add_scalar('Validation Top-1 Accuracy', top_1_accuracy, epoch)
+        #writer.add_scalar('Validation Top-1 Accuracy', top_1_accuracy, epoch)
         metric = top_1_accuracy
         return metric
     elif args.dataset == 'pkummd':
+        #print(output_subjects.shape, output_actions.shape, features.shape, act_features.shape)
         probe_seqs = [['L', 'R']]
         gallery_seqs = [['M']]
         feature, seq_type, action, label = [], [], [], []
         for key in results.keys():
-            act_id, sub_id, pov = key.split('_')
-            label.append(sub_id)
+            subject, video_id, action_id, start_frame, end_frame, pov = key.split('_')
+            label.append(subject)
             seq_type.append('_'.join([pov]))
-            action.append(act_id)
+            action.append(action_id)
             _feature = results[key]
             feature.append(_feature)
         feature = np.array(feature).squeeze()
@@ -211,7 +269,7 @@ def val_epoch(epoch, data_loader, model, writer, use_cuda, args):
         accuracy = compute_metric(feature, label, action, seq_type, probe_seqs, gallery_seqs)
         top_1_accuracy = np.mean(accuracy[:, :, :, 0])
         print('Validation Epoch: %d, Top-1 Accuracy: %.4f' % (epoch, top_1_accuracy), flush=True)
-        writer.add_scalar('Validation Top-1 Accuracy', top_1_accuracy, epoch)
+        #writer.add_scalar('Validation Top-1 Accuracy', top_1_accuracy, epoch)
         metric = top_1_accuracy
         return metric
     else:
@@ -233,19 +291,19 @@ def train_model(cfg, run_id, save_dir, use_cuda, args, writer):
 
     transform_train = Compose(
         [
-            UniformTemporalSubsample(args.num_frames),
             Normalize([0.45, 0.45, 0.45], [0.225, 0.225, 0.225]),
             RandomShortSideScale(
                 min_size=224,
                 max_size=256,
             ),
+            #ColorJitterVideo(),
             RandomCrop(args.input_dim),
             RandomHorizontalFlip(p=0.5)
+            
         ]
     )
     transform_test = Compose(
         [
-            UniformTemporalSubsample(args.num_frames),
             Normalize([0.45, 0.45, 0.45], [0.225, 0.225, 0.225]),
             ShortSideScale(
                 size=256
@@ -253,13 +311,13 @@ def train_model(cfg, run_id, save_dir, use_cuda, args, writer):
             CenterCrop(args.input_dim)
         ]
     )
-
-    train_data_gen = PKUMMDv2(cfg, args.input_type, 'train', 1.0, args.num_frames, skip=skip, transform=transform_train)
-    val_data_gen = PKUMMDv2(cfg, args.input_type, 'test', 1.0, args.num_frames, skip=skip, transform=transform_test)
     
-    train_dataloader = DataLoader(train_data_gen, batch_size=args.batch_size, shuffle=shuffle, num_workers=args.num_workers)
+    flag = True if args.model_version == "v1" or args.model_version == "v2" else False
+    train_data_gen = omniDataLoader(cfg, args.input_type, 'train', 1.0, args.num_frames, skip=skip, transform=transform_train, flag=flag)
+    val_data_gen = omniDataLoader(cfg, args.input_type, 'test', 1.0, args.num_frames, skip=skip, transform=transform_test, flag=False)
     
-    val_dataloader = DataLoader(val_data_gen, batch_size=args.batch_size, shuffle=shuffle, num_workers=args.num_workers)
+    train_dataloader = DataLoader(train_data_gen, batch_size=args.batch_size, shuffle=shuffle, num_workers=args.num_workers, drop_last=True)
+    val_dataloader = DataLoader(val_data_gen, batch_size=args.batch_size, shuffle=shuffle, num_workers=args.num_workers, drop_last=True)
 
     print("Number of training samples : " + str(len(train_data_gen)))
     print("Number of testing samples : " + str(len(val_data_gen)))
@@ -268,18 +326,21 @@ def train_model(cfg, run_id, save_dir, use_cuda, args, writer):
     print("Steps per epoch: " + str(steps_per_epoch))
 
     num_subjects = len(cfg.train_subjects)
-    model = build_model(args.model_version, args.input_dim, args.num_frames, num_subjects, args.patch_size, args.hidden_dim, args.num_heads, args.num_layers)
-
+    model = build_model(args.model_version, args.input_dim, args.num_frames, num_subjects, cfg.num_actions, args.patch_size, args.hidden_dim, args.num_heads, args.num_layers)
+    
+    #####################################################################################################################
     num_gpus = len(args.gpu.split(','))
     if num_gpus > 1:
         model = torch.nn.DataParallel(model)
     
     if use_cuda:
-        model.cuda()
-
+       model.cuda()
+    #####################################################################################################################
+    
     if args.checkpoint is not None and os.path.exists(args.checkpoint):
         pretrained_weights = torch.load(args.checkpoint)['state_dict']
         model.load_state_dict(pretrained_weights, strict=True)
+        print("loaded", flush=True)
 
     if args.optimizer == 'ADAM':
         print("Using ADAM optimizer")
@@ -289,14 +350,14 @@ def train_model(cfg, run_id, save_dir, use_cuda, args, writer):
         optimizer = torch.optim.SGD(model.parameters(), lr=args.learning_rate, momentum=0.9, weight_decay=args.weight_decay)
         
     ema_model = copy.deepcopy(model)
-    ema_optimizer= WeightEMA(model, ema_model, args.learning_rate, alpha=args.ema_decay)
+    ema_optimizer = WeightEMA(model, ema_model, args.learning_rate, alpha=args.ema_decay)
     
     criterion = CrossEntropyLoss()
     
-    max_fmap_score, fmap_score = 0, 0
+    max_fmap_score, fmap_score = -1, -1
     # loop for each epoch
     for epoch in range(args.num_epochs):
-        model = train_epoch(epoch, train_dataloader, model, optimizer, ema_optimizer, criterion, writer, use_cuda, accumulation_steps=args.steps)
+        model = train_epoch(epoch, train_dataloader, model, optimizer, ema_optimizer, criterion, writer, use_cuda, flag, args, accumulation_steps=args.steps)
         if epoch % args.validation_interval == 0:
             score1 = val_epoch(epoch, val_dataloader, model, None, use_cuda, args)
             score2 = val_epoch(epoch, val_dataloader, ema_model, writer, use_cuda, args)
@@ -314,3 +375,7 @@ def train_model(cfg, run_id, save_dir, use_cuda, args, writer):
             }
             torch.save(states, save_file_path)
             max_fmap_score = fmap_score
+        train_data_gen = omniDataLoader(cfg, args.input_type, 'train', 1.0, args.num_frames, skip=skip, transform=transform_train, flag=flag)
+        val_data_gen = omniDataLoader(cfg, args.input_type, 'test', 1.0, args.num_frames, skip=skip, transform=transform_test, flag=False)
+        train_dataloader = DataLoader(train_data_gen, batch_size=args.batch_size, shuffle=shuffle, num_workers=args.num_workers, drop_last=True)
+        val_dataloader = DataLoader(val_data_gen, batch_size=args.batch_size, shuffle=shuffle, num_workers=args.num_workers, drop_last=True)

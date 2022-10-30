@@ -1,6 +1,9 @@
 import torch 
 from torch import nn
 from .vivit import ViViT
+from .I3D import InceptionI3d
+from torchvision.models.video import r2plus1d_18, r3d_18, R2Plus1D_18_Weights, R3D_18_Weights
+from torchvision.models.feature_extraction import create_feature_extractor, get_graph_node_names
 
 class VideoTransformer(nn.Module):
     def __init__(self, input_size, num_frames, num_subjects, patch_size, hidden_dim, num_heads, num_layers):
@@ -18,4 +21,56 @@ class VideoTransformer(nn.Module):
     def forward(self, inputs):
         outputs, features = self.vivit_model(inputs)
         return outputs, features
+
+class I3D(nn.Module):
+    def __init__(self, num_subjects, hidden_dim):
+        super(I3D, self).__init__()
+        self.num_subjects = num_subjects
+        self.I3D_model = InceptionI3d(num_classes=num_subjects, hidden_dim=hidden_dim)
+        
+    def forward(self, inputs):
+        inputs = inputs.permute(0, 2, 1, 3, 4)
+        outputs, features = self.I3D_model(inputs)
+        return outputs, features
+
+class R2plus1D(nn.Module):
+    def __init__(self, num_subjects):
+        super(R2plus1D, self).__init__()
+        weights = R2Plus1D_18_Weights.DEFAULT
+        self.num_subjects = num_subjects
+        model = r2plus1d_18(weights=weights).cuda()
+        model.fc = nn.Linear(512, self.num_subjects)
+        self.R2plus1D_model = model
+        self.extractor = create_feature_extractor(model, return_nodes={"avgpool": "features"})
+        
+    def forward(self, inputs):
+        inputs = inputs.permute(0, 2, 1, 3, 4)
+        outputs = self.R2plus1D_model(inputs)
+        features = self.extractor(inputs)
+        features = list(features.values())
+        features = features[0]
+        features = torch.squeeze(features)
+        return outputs, features
+        
+        
+class R3D(nn.Module):
+    def __init__(self, num_subjects):
+        super(R3D, self).__init__()
+        weights = R3D_18_Weights.DEFAULT
+        model = r3d_18(weights=weights).cuda()
+        self.num_subjects = num_subjects
+        model.fc = nn.Linear(512, self.num_subjects)
+        self.R3D_model = model
+        self.extractor = create_feature_extractor(model, return_nodes={"avgpool": "features"})
+
+        
+    def forward(self, inputs):
+        inputs = inputs.permute(0, 2, 1, 3, 4)
+        outputs = self.R3D_model(inputs)
+        features = self.extractor(inputs)
+        features = list(features.values())
+        features = features[0]
+        features = torch.squeeze(features)
+        return outputs, features
+
 

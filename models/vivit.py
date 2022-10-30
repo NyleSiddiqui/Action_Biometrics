@@ -1,320 +1,298 @@
 import torch
-from torch import nn, einsum
-import torch.nn.functional as F
-from torch.nn.modules.utils import _pair
-from einops import rearrange, repeat
-from einops.layers.torch import Rearrange
-import numpy as np
-
-from .weight_init import trunc_normal_, constant_init_, kaiming_init_
-
-class Residual(nn.Module):
-    def __init__(self, fn):
-        super().__init__()
-        self.fn = fn
-    def forward(self, x, **kwargs):
-        return self.fn(x, **kwargs) + x
-
-class PreNorm(nn.Module):
-    def __init__(self, dim, fn):
-        super().__init__()
-        self.norm = nn.LayerNorm(dim)
-        self.fn = fn
-    def forward(self, x, **kwargs):
-        return self.fn(self.norm(x), **kwargs)
-
-class FeedForward(nn.Module):
-    def __init__(self, dim, hidden_dim, dropout = 0.):
-        super().__init__()
-        self.net = nn.Sequential(
-            nn.Linear(dim, hidden_dim),
-            nn.GELU(),
-            nn.Dropout(dropout),
-            nn.Linear(hidden_dim, dim),
-            nn.Dropout(dropout)
-        )
-    def forward(self, x):
-        return self.net(x)
-
-class Attention(nn.Module):
-    def __init__(self, dim, heads = 8, dim_head = 64, dropout = 0.):
-        super().__init__()
-        inner_dim = dim_head *  heads
-        project_out = not (heads == 1 and dim_head == dim)
-
-        self.heads = heads
-        self.scale = dim_head ** -0.5
-
-        self.to_qkv = nn.Linear(dim, inner_dim * 3, bias = False)
-
-        self.to_out = nn.Sequential(
-            nn.Linear(inner_dim, dim),
-            nn.Dropout(dropout)
-        ) if project_out else nn.Identity()
-
-    def forward(self, x):
-        b, n, _, h = *x.shape, self.heads
-        qkv = self.to_qkv(x).chunk(3, dim = -1)
-        q, k, v = map(lambda t: rearrange(t, 'b n (h d) -> b h n d', h = h), qkv)
-
-        dots = einsum('b h i d, b h j d -> b h i j', q, k) * self.scale
-
-        attn = dots.softmax(dim=-1)
-
-        out = einsum('b h i j, b h j d -> b h i d', attn, v)
-        out = rearrange(out, 'b h n d -> b n (h d)')
-        out =  self.to_out(out)
-        return out
+from torch import nn
+from einops import rearrange, reduce, repeat
+from .transformer import PatchEmbed, TransformerContainer, get_sine_cosine_pos_emb
+from .weight_init import (trunc_normal_, init_from_vit_pretrain_, 
+	init_from_mae_pretrain_, init_from_kinetics_pretrain_)
 
 
-class ReAttention(nn.Module):
-    def __init__(self, dim, heads = 8, dim_head = 64, dropout = 0.):
-        super().__init__()
-        inner_dim = dim_head *  heads
-        self.heads = heads
-        self.scale = dim_head ** -0.5
-
-        self.to_qkv = nn.Linear(dim, inner_dim * 3, bias = False)
-
-        self.reattn_weights = nn.Parameter(torch.randn(heads, heads))
-
-        self.reattn_norm = nn.Sequential(
-            Rearrange('b h i j -> b i j h'),
-            nn.LayerNorm(heads),
-            Rearrange('b i j h -> b h i j')
-        )
-
-        self.to_out = nn.Sequential(
-            nn.Linear(inner_dim, dim),
-            nn.Dropout(dropout)
-        )
-
-    def forward(self, x):
-        b, n, _, h = *x.shape, self.heads
-        qkv = self.to_qkv(x).chunk(3, dim = -1)
-        q, k, v = map(lambda t: rearrange(t, 'b n (h d) -> b h n d', h = h), qkv)
-
-        # attention
-
-        dots = einsum('b h i d, b h j d -> b h i j', q, k) * self.scale
-        attn = dots.softmax(dim=-1)
-
-        # re-attention
-
-        attn = einsum('b h i j, h g -> b g i j', attn, self.reattn_weights)
-        attn = self.reattn_norm(attn)
-
-        # aggregate and out
-
-        out = einsum('b h i j, b h j d -> b h i d', attn, v)
-        out = rearrange(out, 'b h n d -> b n (h d)')
-        out =  self.to_out(out)
-        return out
-    
-class LeFF(nn.Module):
-    
-    def __init__(self, dim = 192, scale = 4, depth_kernel = 3):
-        super().__init__()
-        
-        scale_dim = dim*scale
-        self.up_proj = nn.Sequential(nn.Linear(dim, scale_dim),
-                                    Rearrange('b n c -> b c n'),
-                                    nn.BatchNorm1d(scale_dim),
-                                    nn.GELU(),
-                                    Rearrange('b c (h w) -> b c h w', h=14, w=14)
-                                    )
-        
-        self.depth_conv =  nn.Sequential(nn.Conv2d(scale_dim, scale_dim, kernel_size=depth_kernel, padding=1, groups=scale_dim, bias=False),
-                          nn.BatchNorm2d(scale_dim),
-                          nn.GELU(),
-                          Rearrange('b c h w -> b (h w) c', h=14, w=14)
-                          )
-        
-        self.down_proj = nn.Sequential(nn.Linear(scale_dim, dim),
-                                    Rearrange('b n c -> b c n'),
-                                    nn.BatchNorm1d(dim),
-                                    nn.GELU(),
-                                    Rearrange('b c n -> b n c')
-                                    )
-        
-    def forward(self, x):
-        x = self.up_proj(x)
-        x = self.depth_conv(x)
-        x = self.down_proj(x)
-        return x
-    
-    
-class LCAttention(nn.Module):
-    def __init__(self, dim, heads = 8, dim_head = 64, dropout = 0.):
-        super().__init__()
-        inner_dim = dim_head *  heads
-        project_out = not (heads == 1 and dim_head == dim)
-
-        self.heads = heads
-        self.scale = dim_head ** -0.5
-
-        self.to_qkv = nn.Linear(dim, inner_dim * 3, bias = False)
-
-        self.to_out = nn.Sequential(
-            nn.Linear(inner_dim, dim),
-            nn.Dropout(dropout)
-        ) if project_out else nn.Identity()
-
-    def forward(self, x):
-        b, n, _, h = *x.shape, self.heads
-        qkv = self.to_qkv(x).chunk(3, dim = -1)
-        q, k, v = map(lambda t: rearrange(t, 'b n (h d) -> b h n d', h = h), qkv)
-        q = q[:, :, -1, :].unsqueeze(2) # Only Lth element use as query
-
-        dots = einsum('b h i d, b h j d -> b h i j', q, k) * self.scale
-
-        attn = dots.softmax(dim=-1)
-
-        out = einsum('b h i j, b h j d -> b h i d', attn, v)
-        out = rearrange(out, 'b h n d -> b n (h d)')
-        out =  self.to_out(out)
-        return out
-
-
-class PatchEmbed(nn.Module):
-	"""Images to Patch Embedding.
+class ViViT(nn.Module):
+	"""ViViT. A PyTorch impl of `ViViT: A Video Vision Transformer`
+		<https://arxiv.org/abs/2103.15691>
 	Args:
+		num_frames (int): Number of frames in the video.
 		img_size (int | tuple): Size of input image.
 		patch_size (int): Size of one patch.
-		tube_size (int): Size of temporal field of one 3D patch.
-		in_channels (int): Channel num of input features. Defaults to 3.
+		pretrained (str | None): Name of pretrained model. Default: None.
 		embed_dims (int): Dimensions of embedding. Defaults to 768.
-		conv_type (str): Type for convolution layer. Defaults to 'Conv2d'.
+		num_heads (int): Number of parallel attention heads. Defaults to 12.
+		num_transformer_layers (int): Number of transformer layers. Defaults to 12.
+		in_channels (int): Channel num of input features. Defaults to 3.
+		dropout_p (float): Probability of dropout layer. Defaults to 0..
+		tube_size (int): Dimension of the kernel size in Conv3d. Defaults to 2.
+		conv_type (str): Type of the convolution in PatchEmbed layer. Defaults to Conv3d.
+		attention_type (str): Type of attentions in TransformerCoder. Choices
+			are 'divided_space_time', 'fact_encoder' and 'joint_space_time'.
+			Defaults to 'fact_encoder'.
+		norm_layer (dict): Config for norm layers. Defaults to nn.LayerNorm.
+		copy_strategy (str): Copy or Initial to zero towards the new additional layer.
+		extend_strategy (str): How to initialize the weights of Conv3d from pre-trained Conv2d.
+		use_learnable_pos_emb (bool): Whether to use learnable position embeddings.
+		return_cls_token (bool): Whether to use cls_token to predict class label.
 	"""
+	supported_attention_types = [
+		'fact_encoder', 'joint_space_time', 'divided_space_time'
+	]
 
 	def __init__(self,
-				 img_size,
-				 patch_size,
-				 tube_size=2,
-				 in_channels=3,
+				 num_frames,
+         num_subjects,
+				 img_size=224,
+				 patch_size=16,
+				 pretrain_pth=None,
+				 weights_from='imagenet',
 				 embed_dims=768,
-				 conv_type='Conv2d'):
+				 num_heads=12,
+				 num_transformer_layers=12,
+				 in_channels=3,
+				 dropout_p=0.,
+				 tube_size=2,
+				 conv_type='Conv3d',
+				 attention_type='fact_encoder',
+				 norm_layer=nn.LayerNorm,
+				 copy_strategy='repeat',
+				 extend_strategy='temporal_avg',
+				 use_learnable_pos_emb=True,
+				 return_cls_token=True,
+				 **kwargs):
 		super().__init__()
-		self.img_size = _pair(img_size)
-		self.patch_size = _pair(patch_size)
-
-		num_patches = (self.img_size[1] // self.patch_size[1]) * (self.img_size[0] // self.patch_size[0])
-		assert num_patches * self.patch_size[0] * self.patch_size[1] == self.img_size[0] * self.img_size[1], 'The image size H*W must be divisible by patch size'
-		self.num_patches = num_patches
-
-		# Use conv layer to embed
-		if conv_type == 'Conv2d':
-			self.projection = nn.Conv2d(
-				in_channels,
-				embed_dims,
-				kernel_size=patch_size,
-				stride=patch_size)
-		elif conv_type == 'Conv3d':
-			self.projection = nn.Conv3d(
-				in_channels,
-				embed_dims,
-				kernel_size=(tube_size, patch_size, patch_size),
-				stride=(tube_size, patch_size, patch_size))
-		else:
-			raise TypeError(f'Unsupported conv layer type {conv_type}')
-			
-		self.init_weights(self.projection)
-
-	def init_weights(self, module):
-		if hasattr(module, 'weight') and module.weight is not None:
-			kaiming_init_(module.weight, mode='fan_in', nonlinearity='relu')
-		if hasattr(module, 'bias') and module.bias is not None:
-			constant_init_(module.bias, constant_value=0)
-
-	def forward(self, x):
-		layer_type = type(self.projection)
-		if layer_type == nn.Conv3d:
-			x = rearrange(x, 'b t c h w -> b c t h w')
-			x = self.projection(x)
-			x = rearrange(x, 'b c t h w -> b t (h w) c')
-		elif layer_type == nn.Conv2d:
-			x = rearrange(x, 'b t c h w -> (b t) c h w')
-			x = self.projection(x)
-			x = rearrange(x, 'b c h w -> b (h w) c')
-		else:
-			raise TypeError(f'Unsupported conv layer type {layer_type}')
+		assert attention_type in self.supported_attention_types, (
+			f'Unsupported Attention Type {attention_type}!')
 		
-		return x
-
-
-class Transformer(nn.Module):
-    def __init__(self, dim, depth, heads, dim_head, mlp_dim, dropout = 0.):
-        super().__init__()
-        self.layers = nn.ModuleList([])
-        self.norm = nn.LayerNorm(dim)
-        for _ in range(depth):
-            self.layers.append(nn.ModuleList([
-                PreNorm(dim, Attention(dim, heads = heads, dim_head = dim_head, dropout = dropout)),
-                PreNorm(dim, FeedForward(dim, mlp_dim, dropout = dropout))
-            ]))
-
-    def forward(self, x):
-        for attn, ff in self.layers:
-            x = attn(x) + x
-            x = ff(x) + x
-        return self.norm(x)
-
-
-  
-class ViViT(nn.Module):
-    def __init__(self, image_size, patch_size, num_classes, num_frames, dim = 192, depth = 4, heads = 3, pool = 'cls', in_channels = 3, dim_head = 64, dropout = 0.,
-                 emb_dropout = 0., scale_dim = 4, tube_size=2, conv_type='Conv3d'):
-        super().__init__()
-        
-        assert pool in {'cls', 'mean'}, 'pool type must be either cls (cls token) or mean (mean pooling)'
-
-
-        assert image_size % patch_size == 0, 'Image dimensions must be divisible by the patch size.'
-        num_patches = (image_size // patch_size) ** 2
-        patch_dim = in_channels * patch_size ** 2
-        self.to_patch_embedding = PatchEmbed(
-			img_size=image_size,
+		num_frames = num_frames//tube_size
+		self.num_frames = num_frames
+		self.pretrain_pth = pretrain_pth
+		self.weights_from = weights_from
+		self.embed_dims = embed_dims
+		self.num_transformer_layers = num_transformer_layers
+		self.attention_type = attention_type
+		self.conv_type = conv_type
+		self.copy_strategy = copy_strategy
+		self.extend_strategy = extend_strategy
+		self.tube_size = tube_size
+		self.num_time_transformer_layers = 0
+		self.use_learnable_pos_emb = use_learnable_pos_emb
+		self.return_cls_token = return_cls_token
+		self.mlp_head = nn.Linear(embed_dims, num_subjects)
+    
+		#tokenize & position embedding
+		self.patch_embed = PatchEmbed(
+			img_size=img_size,
 			patch_size=patch_size,
 			in_channels=in_channels,
-			embed_dims=dim,
+			embed_dims=embed_dims,
 			tube_size=tube_size,
 			conv_type=conv_type)
+		num_patches = self.patch_embed.num_patches
+		
+		if self.attention_type == 'divided_space_time':
+			# Divided Space Time Attention - Model 3
+			operator_order = ['time_attn','space_attn','ffn']
+			container = TransformerContainer(
+				num_transformer_layers=num_transformer_layers,
+				embed_dims=embed_dims,
+				num_heads=num_heads,
+				num_frames=num_frames,
+				norm_layer=norm_layer,
+				hidden_channels=embed_dims*4,
+				operator_order=operator_order)
 
-        self.pos_embedding = nn.Parameter(torch.randn(1, num_frames//tube_size, num_patches + 1, dim))
-        self.space_token = nn.Parameter(torch.randn(1, 1, dim))
-        self.space_transformer = Transformer(dim, depth, heads, dim_head, dim*scale_dim, dropout)
+			transformer_layers = container
+		elif self.attention_type == 'joint_space_time':
+			# Joint Space Time Attention - Model 1
+			operator_order = ['self_attn','ffn']
+			container = TransformerContainer(
+				num_transformer_layers=num_transformer_layers,
+				embed_dims=embed_dims,
+				num_heads=num_heads,
+				num_frames=num_frames,
+				norm_layer=norm_layer,
+				hidden_channels=embed_dims*4,
+				operator_order=operator_order)
+			
+			transformer_layers = container
+		else:
+			# Divided Space Time Transformer Encoder - Model 2
+			transformer_layers = nn.ModuleList([])
+			self.num_time_transformer_layers = 4
+			
+			spatial_transformer = TransformerContainer(
+				num_transformer_layers=num_transformer_layers,
+				embed_dims=embed_dims,
+				num_heads=num_heads,
+				num_frames=num_frames,
+				norm_layer=norm_layer,
+				hidden_channels=embed_dims*4,
+				operator_order=['self_attn','ffn'])
+			
+			temporal_transformer = TransformerContainer(
+				num_transformer_layers=self.num_time_transformer_layers,
+				embed_dims=embed_dims,
+				num_heads=num_heads,
+				num_frames=num_frames,
+				norm_layer=norm_layer,
+				hidden_channels=embed_dims*4,
+				operator_order=['self_attn','ffn'])
 
-        self.temporal_token = nn.Parameter(torch.randn(1, 1, dim))
-        self.temporal_transformer = Transformer(dim, depth, heads, dim_head, dim*scale_dim, dropout)
+			transformer_layers.append(spatial_transformer)
+			transformer_layers.append(temporal_transformer)
+ 
+		self.transformer_layers = transformer_layers
+		self.norm = norm_layer(embed_dims, eps=1e-6)
+		
+		self.cls_token = nn.Parameter(torch.zeros(1,1,embed_dims))
+		# whether to add one cls_token in temporal pos_enb
+		if attention_type == 'fact_encoder':
+			num_frames = num_frames + 1
+			num_patches = num_patches + 1
+			self.use_cls_token_temporal = False
+		else:
+			self.use_cls_token_temporal = operator_order[-2] == 'time_attn'
+			if self.use_cls_token_temporal:
+				num_frames = num_frames + 1
+			else:
+				num_patches = num_patches + 1
 
-        self.dropout = nn.Dropout(emb_dropout)
-        self.pool = pool
+		if use_learnable_pos_emb:
+			self.pos_embed = nn.Parameter(torch.zeros(1,num_patches,embed_dims))
+			self.time_embed = nn.Parameter(torch.zeros(1,num_frames,embed_dims))
+		else:
+			self.pos_embed = get_sine_cosine_pos_emb(num_patches,embed_dims)
+			self.time_embed = get_sine_cosine_pos_emb(num_frames,embed_dims)
+		self.drop_after_pos = nn.Dropout(p=dropout_p)
+		self.drop_after_time = nn.Dropout(p=dropout_p)
 
-        self.mlp_head = nn.Sequential(
-            nn.LayerNorm(dim),
-            nn.Linear(dim, num_classes)
-        )
+		self.init_weights()
 
-    def forward(self, x):
-        x = self.to_patch_embedding(x)
-        b, t, n, _ = x.shape
+	def init_weights(self):
+		if self.use_learnable_pos_emb:
+			#trunc_normal_(self.pos_embed, std=.02)
+			#trunc_normal_(self.time_embed, std=.02)
+			nn.init.trunc_normal_(self.pos_embed, std=.02)
+			nn.init.trunc_normal_(self.time_embed, std=.02)
+		trunc_normal_(self.cls_token, std=.02)
+		
+		if self.pretrain_pth is not None:
+			if self.weights_from == 'imagenet':
+				init_from_vit_pretrain_(self,
+										self.pretrain_pth,
+										self.conv_type,
+										self.attention_type,
+										self.copy_strategy,
+										self.extend_strategy, 
+										self.tube_size, 
+										self.num_time_transformer_layers)
+			elif self.weights_from == 'kinetics':
+				init_from_kinetics_pretrain_(self,
+											 self.pretrain_pth)
+			else:
+				raise TypeError(f'not support the pretrained weight {self.pretrain_pth}')
 
-        cls_space_tokens = repeat(self.space_token, '() n d -> b t n d', b = b, t=t)
-        x = torch.cat((cls_space_tokens, x), dim=2)
-        x += self.pos_embedding[:, :, :(n + 1)]
-        x = self.dropout(x)
+	@torch.jit.ignore
+	def no_weight_decay_keywords(self):
+		return {'pos_embed', 'cls_token', 'mask_token'}
 
-        x = rearrange(x, 'b t n d -> (b t) n d')
-        x = self.space_transformer(x)
-        x = rearrange(x[:, 0], '(b t) ... -> b t ...', b=b)
+	def prepare_tokens(self, x):
+		#Tokenize
+		b = x.shape[0]
+		x = self.patch_embed(x)
+		
+		# Add Position Embedding
+		cls_tokens = repeat(self.cls_token, 'b ... -> (repeat b) ...', repeat=x.shape[0])
+		if self.use_cls_token_temporal:
+			if self.use_learnable_pos_emb:
+				x = x + self.pos_embed
+			else:
+				x = x + self.pos_embed.type_as(x).detach()
+			x = torch.cat((cls_tokens, x), dim=1)
+		else:
+			x = torch.cat((cls_tokens, x), dim=1)
+			if self.use_learnable_pos_emb:
+				x = x + self.pos_embed
+			else:
+				x = x + self.pos_embed.type_as(x).detach()
+		x = self.drop_after_pos(x)
 
-        cls_temporal_tokens = repeat(self.temporal_token, '() n d -> b n d', b=b)
-        x = torch.cat((cls_temporal_tokens, x), dim=1)
+		# Add Time Embedding
+		if self.attention_type != 'fact_encoder':
+			cls_tokens = x[:b, 0, :].unsqueeze(1)
+			if self.use_cls_token_temporal:
+				x = rearrange(x[:, 1:, :], '(b t) p d -> (b p) t d', b=b)
+				cls_tokens = repeat(cls_tokens,
+									'b ... -> (repeat b) ...',
+									repeat=x.shape[0]//b)
+				x = torch.cat((cls_tokens, x), dim=1)
+				if self.use_learnable_pos_emb:
+					x = x + self.time_embed
+				else:
+					x = x + self.time_embed.type_as(x).detach()
+				cls_tokens = x[:b, 0, :].unsqueeze(1)
+				x = rearrange(x[:, 1:, :], '(b p) t d -> b (p t) d', b=b)
+				x = torch.cat((cls_tokens, x), dim=1)
+			else:
+				x = rearrange(x[:, 1:, :], '(b t) p d -> (b p) t d', b=b)
+				if self.use_learnable_pos_emb:
+					x = x + self.time_embed
+				else:
+					x = x + self.time_embed.type_as(x).detach()
+				x = rearrange(x, '(b p) t d -> b (p t) d', b=b)
+				x = torch.cat((cls_tokens, x), dim=1)
+			x = self.drop_after_time(x)
+		
+		return x, cls_tokens, b
 
-        x = self.temporal_transformer(x)
-        
+	def forward(self, x):
+		x, cls_tokens, b = self.prepare_tokens(x)
+		
+		if self.attention_type != 'fact_encoder':
+			x = self.transformer_layers(x)
+		else:
+			# fact encoder - CRNN style
+			spatial_transformer, temporal_transformer, = *self.transformer_layers,
+			x = spatial_transformer(x)
+			
+			# Add Time Embedding
+			cls_tokens = x[:b, 0, :].unsqueeze(1)
+			x = rearrange(x[:, 1:, :], '(b t) p d -> b t p d', b=b)
+			x = reduce(x, 'b t p d -> b t d', 'mean')
+			x = torch.cat((cls_tokens, x), dim=1)
+			if self.use_learnable_pos_emb:
+				x = x + self.time_embed
+			else:
+				x = x + self.time_embed.type_as(x).detach()
+			x = self.drop_after_time(x)
+			
+			x = temporal_transformer(x)
 
-        x = x.mean(dim = 1) if self.pool == 'mean' else x[:, 0]
+		x = self.norm(x)
+		# Return Class Token
+		if self.return_cls_token:
+			x =  x[:, 0]
+		else:
+			x = x[:, 1:].mean(1)
+      
+		return self.mlp_head(x), x 
 
-        return self.mlp_head(x), x
-    
+	def get_last_selfattention(self, x):
+		x, cls_tokens, b = self.prepare_tokens(x)
+		
+		if self.attention_type != 'fact_encoder':
+			x = self.transformer_layers(x, return_attention=True)
+		else:
+			# fact encoder - CRNN style
+			spatial_transformer, temporal_transformer, = *self.transformer_layers,
+			x = spatial_transformer(x)
+			
+			# Add Time Embedding
+			cls_tokens = x[:b, 0, :].unsqueeze(1)
+			x = rearrange(x[:, 1:, :], '(b t) p d -> b t p d', b=b)
+			x = reduce(x, 'b t p d -> b t d', 'mean')
+			x = torch.cat((cls_tokens, x), dim=1)
+			if self.use_learnable_pos_emb:
+				x = x + self.time_embed
+			else:
+				x = x + self.time_embed.type_as(x).detach()
+			x = self.drop_after_time(x)
+			x = temporal_transformer(x, return_attention=True)
+		return x
+

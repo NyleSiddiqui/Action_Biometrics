@@ -184,7 +184,7 @@ class InceptionI3d(nn.Module):
         'Logits'
     )
 
-    def __init__(self, num_classes=400, spatial_squeeze=True,
+    def __init__(self, num_classes=400, num_actions=1, spatial_squeeze=True,
                  final_endpoint='Logits', name='inception_i3d', in_channels=3, dropout_keep_prob=0.5, hidden_dim=256):
         """Initializes I3D model instance.
         Args:
@@ -208,13 +208,14 @@ class InceptionI3d(nn.Module):
 
         super(InceptionI3d, self).__init__()
         self._num_classes = num_classes
+        self.num_actions = num_actions
         self._spatial_squeeze = spatial_squeeze
         self._final_endpoint = final_endpoint
         self.logits = None
         self.predictions = None
         self.hidden_dim = hidden_dim
-        self.predictions_head = nn.Linear(240, num_classes)
         self.cust_flatten = nn.Flatten(start_dim=1)
+        self.feature_dim = nn.Linear(3072, self.hidden_dim)
 
         if self._final_endpoint not in self.VALID_ENDPOINTS:
             raise ValueError('Unknown final endpoint %s' % self._final_endpoint)
@@ -306,6 +307,22 @@ class InceptionI3d(nn.Module):
                              use_bias=True,
                              name='logits')
                              
+        self.actions = Unit3D(in_channels=384 + 384 + 128 + 128, output_channels=self.num_actions,
+                             kernel_shape=[1, 1, 1],
+                             padding=0,
+                             activation_fn=None,
+                             use_batch_norm=False,
+                             use_bias=True,
+                             name='actions')
+                             
+        self.features = Unit3D(in_channels=384 + 384 + 128 + 128, output_channels=self.hidden_dim,
+                             kernel_shape=[1, 1, 1],
+                             padding=0,
+                             activation_fn=None,
+                             use_batch_norm=False,
+                             use_bias=True,
+                             name='features')
+                             
         self.build()
 
     def replace_logits(self, num_classes):
@@ -328,13 +345,20 @@ class InceptionI3d(nn.Module):
                 x = self._modules[end_point](x)  # use _modules to work with dataparallel
         features = x
         features = self.avg_pool(features)
-        features = self.cust_flatten(torch.squeeze(features))
+        features = self.feature_dim(self.cust_flatten(torch.squeeze(features)))
+        actions = x
+        actions = self.actions(self.dropout(self.avg_pool(x)))
+        
         x = self.logits(self.dropout(self.avg_pool(x)))
+        
         if self._spatial_squeeze:
             logits = x.squeeze(3).squeeze(3)
+            actions = actions.squeeze(3).squeeze(3)
+            
         # logits is batch X time X classes, which is what we want to work with
         logits = logits[:, :, 0].squeeze()
-        return logits, features
+        actions = actions[:, :, 0].squeeze()
+        return logits, actions, features
 
     def extract_features(self, x):
         for end_point in self.VALID_ENDPOINTS:

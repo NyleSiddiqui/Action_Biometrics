@@ -67,10 +67,10 @@ if __name__ == '__main__':
 
     parser.add_argument('--run_description', dest='run_description', type=str, required=False, help='Please description of the run to write to log')
 
-    parser.add_argument('--dataset', type=str, required=True, help='Dataset to use.', choices=["ntu_rgbd_120", "pkummd", "pkummdv1", 'charades'])
+    parser.add_argument('--dataset', type=str, required=True, help='Dataset to use.', choices=["ntu_rgbd_120", "small_ntu_rgbd_120", "pkummd", "pkummdv1", 'charades'])
 
     parser.add_argument('--model_version', type=str, required=True, help='Specify the model version to use for transformer.', 
-                        choices=["baseline", "i3d", "r3d", "r2plus1d", "v1", "v2", "vivit"])
+                        choices=["baseline", "i3d", "r3d", "r2plus1d", "v1", "v2", 'v3', "vivit", 'v2+backbone', 'v3+backbone'])
 
     parser.add_argument('--input_type', type=str, required=True, help='Specify if the input is either RGB or Flow.', choices=["rgb", "ir", "skeleton"])
 
@@ -90,7 +90,7 @@ if __name__ == '__main__':
 
     parser.add_argument('--patch_size', type=int, default=16, help='Size of the patches for the input frames.')
 
-    parser.add_argument('--hidden_dim', type=int, default=256, help='Size of the features in the Transformer Encoder Layer.')
+    parser.add_argument('--hidden_dim', type=int, default=512, help='Size of the features in the Transformer Encoder Layer.')
 
     parser.add_argument('--num_heads', type=int, default=8, help='Number of heads in the encoder layers.')
 
@@ -115,6 +115,10 @@ if __name__ == '__main__':
     parser.add_argument('--validation_interval', type=int, default=5, help='Number of epochs between validation step.')
 
     parser.add_argument('--seed', type=int, default=7, help='Random seed.')
+    
+    parser.add_argument('--action_train', type=bool, default=True, help='Train the baselines with action loss or not')
+    
+    parser.add_argument('--contrastive_train', type=bool, default=False, help='Train the baselines with contrastive feature loss or not')
 
     # parse arguments
     args = parser.parse_args()

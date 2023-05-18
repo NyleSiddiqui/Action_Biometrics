@@ -50,7 +50,8 @@ def restricted_float(x):
         raise argparse.ArgumentTypeError("%r not in range [0.0, 1.0]"%(x,))
     return x
 
-
+# --checkpoint
+# C:\Users\ny525072\PycharmProjects\skeletonMultiView\MultiView_Actions\results\saved_models\pkcs+v1skeleton_01-03-23_1910\model_20_0.8915.pth
 if __name__ == '__main__':
 
     parser = argparse.ArgumentParser(description='Script to train Multi-label Classification model')
@@ -67,10 +68,10 @@ if __name__ == '__main__':
 
     parser.add_argument('--run_description', dest='run_description', type=str, required=False, help='Please description of the run to write to log')
 
-    parser.add_argument('--dataset', type=str, required=True, help='Dataset to use.', choices=["ntu_rgbd_120", "small_ntu_rgbd_120", "pkummd", "pkummdv1", 'charades'])
+    parser.add_argument('--dataset', type=str, required=True, help='Dataset to use.', choices=["ntu_rgbd_120", 'ntu_rgbd_60', "pkummd",  'mergedntupk', 'numa'])
 
     parser.add_argument('--model_version', type=str, required=True, help='Specify the model version to use for transformer.', 
-                        choices=["baseline", "i3d", "r3d", "r2plus1d", "v1", "v2", 'v3', "vivit", 'v2+backbone', 'v3+backbone'])
+                        choices=["baseline", "i3d", "r3d", "r2plus1d", "v1", "v2", 'v3', "vivit", 'v2+backbone', 'v3+backbone', 'v3+D', 'v3_intermediate', 'swin', 'skeleton', 'skeleton2'])
 
     parser.add_argument('--input_type', type=str, required=True, help='Specify if the input is either RGB or Flow.', choices=["rgb", "ir", "skeleton"])
 
@@ -112,11 +113,11 @@ if __name__ == '__main__':
 
     parser.add_argument('--ema-decay', default=0.999, type=float)
 
-    parser.add_argument('--validation_interval', type=int, default=5, help='Number of epochs between validation step.')
+    parser.add_argument('--validation_interval', type=int, default=3, help='Number of epochs between validation step.')
 
     parser.add_argument('--seed', type=int, default=7, help='Random seed.')
     
-    parser.add_argument('--action_train', type=bool, default=True, help='Train the baselines with action loss or not')
+    parser.add_argument('--action_train', type=bool, default=False, help='Train the baselines with action loss or not')
     
     parser.add_argument('--contrastive_train', type=bool, default=False, help='Train the baselines with contrastive feature loss or not')
 

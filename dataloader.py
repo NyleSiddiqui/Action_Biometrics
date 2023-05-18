@@ -257,39 +257,35 @@ class omniDataLoader(Dataset):
             
             
         elif self.dataset == 'pkummd':
-            camera_index = ['L', 'M', 'R']
             if self.flag:
                 anchor = self.videos[index]
                 video_id, sub, act, start_frame, end_frame = anchor[0], anchor[1], anchor[2], anchor[3], anchor[4]
-                camera = video_id[-1]
                 row = [sub, act, video_id, start_frame, end_frame]
-                
-                sv = random.choice([sameview for sameview in self.data.keys() if sameview.split("_")[2][-1] == camera and sameview.split("_")[1] != act])
-                sa = random.choice([sameaction for sameaction in self.data.keys() if sameaction.split("_")[2][-1] != camera and sameaction.split("_")[1] == act])       
+                ss = random.choice([samesub for samesub in self.data.keys() if samesub.split("_")[0] == sub and samesub.split("_")[1] != act])
+                sa = random.choice([sameaction for sameaction in self.data.keys() if sameaction.split("_")[0] != sub and sameaction.split("_")[1] == act])
                 
                 anchor_frames = self.frame_creation(row, self.dataset, self.videos_folder, self.height, self.width, self.num_frames, self.transform)
                 
                 row = random.choice(self.data[sa])
                 sa_sub, sa_act, sa_video_id, sa_start_frame, sa_end_frame, sa_scene = row[0], row[1], row[2], row[3], row[4], row[5]
                 sa_frames = self.frame_creation(row, self.dataset, self.videos_folder, self.height, self.width, self.num_frames, self.transform)
-                
-                row = random.choice(self.data[sv])
-                sv_sub, sv_act, sv_video_id, sv_start_frame, sv_end_frame =  row[0], row[1], row[2], row[3], row[4]
-                sv_frames = self.frame_creation(row, self.dataset, self.videos_folder, self.height, self.width, self.num_frames, self.transform)
-              
-                camera = camera_index.index(camera)
+
+                row = random.choice(self.data[ss])
+                ss_sub, ss_act, ss_video_id, ss_start_frame, ss_end_frame =  row[0], row[1], row[2], row[3], row[4]
+                ss_frames = self.frame_creation(row, self.dataset, self.videos_folder, self.height, self.width, self.num_frames, self.transform)
+
+                subject = self.subjects.index(sub)
                 action = self.actions.index(act)
-                return anchor_frames, sv_frames, sa_frames, camera, action, '_'.join([str(sub), video_id, str(action), str(start_frame), str(end_frame), video_id[-1]])
+                return anchor_frames, ss_frames, sa_frames, subject, action, '_'.join([str(subject), video_id, str(action), str(start_frame), str(end_frame), video_id[-1]])
                 
             else:
                 row = self.videos[index]
                 video_id, subject, action, start_frame, end_frame = row[0], row[1], row[2], int(row[3]), int(row[4])
-                camera = video_id[-1]
                 row = [subject, action, video_id, start_frame, end_frame]
                 frames = self.frame_creation(row, self.dataset, self.videos_folder, self.height, self.width, self.num_frames, self.transform)
                 action = self.actions.index(action)       
-                camera = camera_index.index(camera)
-                return frames, camera, action, '_'.join([str(subject), video_id, str(action), str(start_frame), str(end_frame), video_id[-1]])
+                subject = self.subjects.index(subject)
+                return frames, subject, action, '_'.join([str(subject), video_id, str(action), str(start_frame), str(end_frame), video_id[-1]])
                 
             
         elif self.dataset == 'mergedntupk':
@@ -553,11 +549,11 @@ if __name__ == '__main__':
     cs_skeleton_action_list = [73, 74, 72, 71, 12, 29, 106, 75, 76, 105]
     cv_skeleton_action_list = [73, 12, 76, 72, 74, 11, 103, 75, 71, 105]
 
-    data_generator = omniDataLoader(cfg, 'rgb', 'train', 1.0, 16, skip=0, shuffle=shuffle, transform=None, flag=False, multi_action=False)
+    data_generator = omniDataLoader(cfg, 'rgb', 'train', 1.0, 16, skip=0, shuffle=shuffle, transform=None, flag=True)
     dataloader = DataLoader(data_generator, batch_size=1, num_workers=0, shuffle=False, drop_last=True, collate_fn=None)
     
-    for (clips, views, actions, keys) in tqdm(dataloader):
-        print(clips.shape, actions.shape, views.shape)
+    for (clips, ss, sa, sub, actions, keys) in tqdm(dataloader):
+        print(clips.shape, ss.shape, sa.shape, sub, actions)
         exit()
     
    

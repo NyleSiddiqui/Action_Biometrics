@@ -478,7 +478,7 @@ def train_model(cfg, run_id, save_dir, use_cuda, args, writer):
     action_flag = False
     print(action_flag, flag, flush=True)
 
-    train_data_gen = omniDataLoader(cfg, args.input_type, 'train', .1, args.num_frames, skip=skip,
+    train_data_gen = omniDataLoader(cfg, args.input_type, 'train', 1.0, args.num_frames, skip=skip,
                                     transform=transform_train, flag=flag)
     val_data_gen = omniDataLoader(cfg, args.input_type, 'test', 1.0, args.num_frames, skip=skip,
                                   transform=transform_test, flag=False)

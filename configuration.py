@@ -21,10 +21,10 @@ def build_config(dataset):
         cfg.num_subjects = 40
         
     elif dataset == "pkummd":
-        cfg.videos_folder = 'C://Users/ny525072/Downloads//RGB_VIDEO'
-        cfg.skeleton_folder = 'C://Users/ny525072/Downloads//skeleton_ntu'
-        cfg.train_annotations = '/home/siddiqui/Action_Biometrics-RGB/data/PKUMMDTrainCS_map.csv'
-        cfg.test_annotations = '/home/siddiqui/Action_Biometrics-RGB/data/PKUMMDTestCS_map.csv'
+        cfg.videos_folder =  '/home/c3-0/datasets/MergedPKUMMD/RGB_VIDEO'
+        cfg.train_annotations = '/home/siddiqui/Multiview_Actions/PKUMMDTrainCS_map.csv'
+        cfg.test_annotations = '/home/siddiqui/Multiview_Actions/PKUMMDTestCS_map.csv'
+        cfg.skeleton_folder = '/home/c3-0/praveen/datasets/PKUMMD/data/skeleton_ntu/'
         cfg.train_subjects = range(56) #CS: 56 CV: 66
         cfg.test_subjects = range(7)  #CS:  7 CV: 63
         cfg.num_subjects = 66

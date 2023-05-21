@@ -111,21 +111,21 @@ class omniDataLoader(Dataset):
                 video_id, subject, action, viewpoint = row.split(',')       
                     
             if self.dataset == 'ntu_rgbd_120' or self.dataset == 'ntu_rgbd_60':
-                if f'{video_id}.hdf5' in hdf5_list:
-                    if df['subject'].value_counts()[int(subject)] < 2:
-                        print(row, flush=True)
-                        continue
-                    self.videos.append([video_id, subject, action, placeholder1, placeholder2, placeholder3]) 
-                    view = ';'.join([placeholder1, placeholder3])
-                    if subject not in self.subjects:
-                        self.subjects.append(subject)
-                    if action not in self.actions:
-                        self.actions.append(action)
-                    if view not in self.views:
-                        self.views.append(view)
-                    if f"{subject}_{action}_{video_id}_{placeholder1}_{placeholder2}_{placeholder3}_{view}" not in self.data:
-                        self.data[f"{subject}_{action}_{video_id}_{placeholder1}_{placeholder2}_{placeholder3}_{view}"] = []
-                    self.data[f"{subject}_{action}_{video_id}_{placeholder1}_{placeholder2}_{placeholder3}_{view}"].append([subject, action, video_id, placeholder1, placeholder2, placeholder3, view])
+                #if f'{video_id}.hdf5' in hdf5_list:
+                if df['subject'].value_counts()[int(subject)] < 2:
+                    print(row, flush=True)
+                    continue
+                self.videos.append([video_id, subject, action, placeholder1, placeholder2, placeholder3]) 
+                view = ';'.join([placeholder1, placeholder3])
+                if subject not in self.subjects:
+                    self.subjects.append(subject)
+                if action not in self.actions:
+                    self.actions.append(action)
+                if view not in self.views:
+                    self.views.append(view)
+                if f"{subject}_{action}_{video_id}_{placeholder1}_{placeholder2}_{placeholder3}_{view}" not in self.data:
+                    self.data[f"{subject}_{action}_{video_id}_{placeholder1}_{placeholder2}_{placeholder3}_{view}"] = []
+                self.data[f"{subject}_{action}_{video_id}_{placeholder1}_{placeholder2}_{placeholder3}_{view}"].append([subject, action, video_id, placeholder1, placeholder2, placeholder3, view])
                     
             elif self.dataset == 'mergedntupk':
                 if f'{video_id}.hdf5' in hdf5_list or f'{video_id}_{subject}_{action}_{placeholder1}_{placeholder2}.hdf5' in hdf5_list2:
@@ -373,26 +373,33 @@ class omniDataLoader(Dataset):
             
     def frame_creation(self, row, dataset, videos_folder, height, width, num_frames, transform, blurred_model=None, bcfg=None):    
         if dataset == "ntu_rgbd_120" or dataset == 'ntu_rgbd_60':
+            skeleton = True
             list16 = []
             subject, action, video_id, start_frame, end_frame = row[0], row[1], row[2], row[3], row[4]
-            frames = h5py.File(os.path.join('/home/siddiqui/Action_Biometrics/frame_data/ntu_rgbd_120', f'{video_id}.hdf5'), 'r')
-            frames = frames['default'][:]
-            frames = torch.from_numpy(frames).float()
-            
-            frame_indexer = np.linspace(0, int(frames.shape[0]) - 1 , num_frames).astype(int)
-            for i, frame in enumerate(frames):
-                if i in frame_indexer:
-                    list16.append(frame)
-            frames = torch.stack([frame for frame in list16])
-            
-            for i, frame in enumerate(frames):
-                frames[i] = frames[i] / 255.
+            if not skeleton:
+                frames = h5py.File(os.path.join('/home/siddiqui/Action_Biometrics/frame_data/ntu_rgbd_120', f'{video_id}.hdf5'), 'r')
+                frames = frames['default'][:]
+                frames = torch.from_numpy(frames).float()
                 
-            if transform:
-                frames = frames.transpose(0, 1)
-                frames = transform(frames)
-                frames = frames.transpose(0, 1)
-            return frames
+                frame_indexer = np.linspace(0, int(frames.shape[0]) - 1 , num_frames).astype(int)
+                for i, frame in enumerate(frames):
+                    if i in frame_indexer:
+                        list16.append(frame)
+                frames = torch.stack([frame for frame in list16])
+                
+                for i, frame in enumerate(frames):
+                    frames[i] = frames[i] / 255.
+                    
+                if transform:
+                    frames = frames.transpose(0, 1)
+                    frames = transform(frames)
+                    frames = frames.transpose(0, 1)
+                return frames
+            else:
+                path = '/home/siddiqui/Action_Biometrics-RGB/frame_data/ntu_rgbd_120_skeletons/'
+                skeleton = np.load(os.path.join(path, f'{video_id[:-7].skeleton.npy}'), allow_pickle=True).item()['skel_body0']
+                print(skeleton.shape)
+                exit()
         
         elif dataset == "pkummd":
             skeleton = True
@@ -423,7 +430,7 @@ class omniDataLoader(Dataset):
                 return frames
                 
             else:
-                path = 'C://Users/ny525072/Downloads//skeleton_ntu'
+                path = '/home/c3-0/praveen/datasets/PKUMMD/data/skeleton_ntu/'
                 view_dic = {'L':'001','M':'002','R':'003'}
                 file_id_ = video_id.split('-')[0][1:]
                 file_view = video_id.split('-')[1]
@@ -440,7 +447,7 @@ class omniDataLoader(Dataset):
 
                 save_name = 'F' + file_id_ + 'V' + view_id + 'C' + class_id_
                 sk_files = [f for f in self.skeleton_files if save_name in f]
-                # assert len(sk_files) == 1
+                #assert len(sk_files) == 1
                 sk_file = sk_files[0]
                 
                 skeleton_file = os.path.join(path, sk_file)
@@ -518,7 +525,7 @@ class omniDataLoader(Dataset):
         
 if __name__ == '__main__':
     shuffle = False
-    cfg = build_config('pkummd')
+    cfg = build_config('ntu_rgbd_120')
     transform_train = Compose(
                 [
                     Normalize([0.45, 0.45, 0.45], [0.225, 0.225, 0.225]),

@@ -925,7 +925,7 @@ def train_model(cfg, run_id, save_dir, use_cuda, args, writer):
     max_fmap_score, fmap_score = -1, -1
     # loop for each epoch
     for epoch in range(args.num_epochs):
-        #model = train_epoch(epoch, train_dataloader, model, optimizer, ema_optimizer, criterion, writer, use_cuda, flag, args, accumulation_steps=args.steps, action_flag=action_flag) #V3 Charades
+        model = train_epoch(epoch, train_dataloader, model, optimizer, ema_optimizer, criterion, writer, use_cuda, flag, args, accumulation_steps=args.steps, action_flag=action_flag) #V3 Charades
         if epoch % args.validation_interval == 0:
             score1 = val_epoch(cfg, epoch, val_dataloader, model, None, use_cuda, args)
             fmap_score = score1

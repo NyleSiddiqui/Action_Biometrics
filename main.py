@@ -67,10 +67,10 @@ if __name__ == '__main__':
 
     parser.add_argument('--run_description', dest='run_description', type=str, required=False, help='Please description of the run to write to log')
 
-    parser.add_argument('--dataset', type=str, required=True, help='Dataset to use.', choices=["ntu_rgbd_120", "small_ntu_rgbd_120", "pkummd", "pkummdv1", 'charades'])
+    parser.add_argument('--dataset', type=str, required=True, help='Dataset to use.', choices=["ntu_rgbd_120", "small_ntu_rgbd_120", "pkummd", "pkummdv1", 'charades', 'mergedntupk', 'PCharades', 'tennis'])
 
     parser.add_argument('--model_version', type=str, required=True, help='Specify the model version to use for transformer.', 
-                        choices=["baseline", "i3d", "r3d", "r2plus1d", "v1", "v2", 'v3', "vivit", 'v2+backbone', 'v3+backbone'])
+                        choices=["baseline", "i3d", "r3d", "r2plus1d", "v1", "v2", 'v3', "vivit", 'v2+backbone', 'v3+backbone', 'v3+D', 'v3_intermediate', 'swin'])
 
     parser.add_argument('--input_type', type=str, required=True, help='Specify if the input is either RGB or Flow.', choices=["rgb", "ir", "skeleton"])
 
@@ -116,7 +116,7 @@ if __name__ == '__main__':
 
     parser.add_argument('--seed', type=int, default=7, help='Random seed.')
     
-    parser.add_argument('--action_train', type=bool, default=True, help='Train the baselines with action loss or not')
+    parser.add_argument('--action_train', type=bool, default=False, help='Train the baselines with action loss or not')
     
     parser.add_argument('--contrastive_train', type=bool, default=False, help='Train the baselines with contrastive feature loss or not')
 

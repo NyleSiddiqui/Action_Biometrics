@@ -321,36 +321,36 @@ def train_epoch(epoch, data_loader, model, optimizer, ema_optimizer, criterion, 
             #_, _, sa_features = model(sa_clips)
             
             sub_loss = criterion(outputs, targets)
-            #act_loss = criterion(actions, action_targets)
+            act_loss = criterion(actions, action_targets)
             
-            act_loss = BCEWithLogitsLoss()(actions, action_targets.float())
-            actions = torch.sigmoid(actions)
-            actions = (actions > 0.1).long()
-            fscore = f1_score(action_targets.cpu(), actions.cpu(), average='macro')
-            fscores.append(fscore)
+#            act_loss = BCEWithLogitsLoss()(actions, action_targets.float())
+#            actions = torch.sigmoid(actions)
+#            actions = (actions > 0.1).long()
+#            fscore = f1_score(action_targets.cpu(), actions.cpu(), average='macro')
+#            fscores.append(fscore)
             
             #contrastive_loss = nn.TripletMarginLoss()(features, ss_features, sa_features)
             
             outputs = torch.argmax(outputs, dim=1)
             actions = torch.argmax(actions, dim=1)
             
-            #acca = torch.sum(actions == action_targets)
-            #act_acc.append(acca)
+            acca = torch.sum(actions == action_targets)
+            act_acc.append(acca)
             accs = torch.sum(outputs == targets)
             sub_acc.append(accs)
             
             if 5 < i < 8:
                 print(outputs, targets, actions, action_targets, flush=True)
-                #print(act_acc, sub_acc, flush=True)
-                #print(type(act_acc), type(sub_acc))
-                #act = torch.stack([acc for acc in act_acc])
-                #sub = torch.stack([acc for acc in sub_acc])
-                #print(act_acc, sub_acc, flush=True)
-                #print(len(act_acc), len(sub_acc), torch.sum(act), torch.sum(sub), len(data_loader), flush=True)
+                print(act_acc, sub_acc, flush=True)
+                print(type(act_acc), type(sub_acc))
+                act = torch.stack([acc for acc in act_acc])
+                sub = torch.stack([acc for acc in sub_acc])
+                print(act_acc, sub_acc, flush=True)
+                print(len(act_acc), len(sub_acc), torch.sum(act), torch.sum(sub), len(data_loader), flush=True)
             
-            #loss = sub_loss + act_loss + contrastive_loss
-            loss = sub_loss + act_loss
-       
+            #loss = sub_loss + act_loss
+            loss = act_loss
+            
             losses.append(loss.item())
             supervised_sub_losses.append(sub_loss.item())
             supervised_act_losses.append(act_loss.item())
@@ -368,10 +368,10 @@ def train_epoch(epoch, data_loader, model, optimizer, ema_optimizer, criterion, 
             losses.append(loss.item())
     
             del loss, outputs, actions, clips, targets, action_targets, features, sub_loss, act_loss
-        #act = torch.stack([acc for acc in act_acc])
+        act = torch.stack([acc for acc in act_acc])
         sub = torch.stack([acc for acc in sub_acc])
         #print(len(act_acc), len(sub_acc), torch.sum(act), torch.sum(sub), len(data_loader), flush=True)
-        #act_acc = torch.sum(act) / (len(act) * args.batch_size)
+        act_acc = torch.sum(act) / (len(act) * args.batch_size)
         sub_acc = torch.sum(sub) / (len(sub) * args.batch_size)
         
     else:
@@ -400,7 +400,7 @@ def train_epoch(epoch, data_loader, model, optimizer, ema_optimizer, criterion, 
             acc = torch.sum(outputs == targets)
             act_acc.append(acc)
             
-            if i < 10:
+            if i < 3:
                 print(f'pred sub: {outputs}, GT: {targets}', flush=True)
 
             losses.append(loss.item())
@@ -418,17 +418,17 @@ def train_epoch(epoch, data_loader, model, optimizer, ema_optimizer, criterion, 
             losses.append(loss.item())
     
             del loss, outputs, actions, clips, targets, action_targets, features, sub_loss
-        print(len(act_acc), len(sub_acc), np.sum(act_acc), np.sum(sub_acc), len(data_loader), flush=True)
-        act_acc = np.sum(act_acc) / (len(act_acc) * args.batch_size)
-        sub_acc = np.sum(sub_acc) / (len(sub_acc) * args.batch_size)
+        act = torch.stack([acc for acc in act_acc])
+        act_acc = torch.sum(act) / (len(act) * args.batch_size)
+        sub_acc = 0
             
     print('Training Epoch: %d, Loss: %.4f, SL: %.4f, AL: %.4f, SCL: %.4f, ACL: %.4f, OSL: %.4f, OAL: %.4f' % (epoch, np.mean(losses), np.mean(supervised_sub_losses),  np.mean(supervised_act_losses), np.mean(ss_contrastive_losses), np.mean(sa_contrastive_losses), np.mean(ortho_sub_losses), np.mean(ortho_act_losses)), flush=True)
     print('Training Epoch: %d, Subject Accuracy: %.4f' % (epoch, sub_acc), flush=True)
     
-    if action_flag:
-        print('Training Epoch: %d, Action F1 Score: %.4f' % (epoch, fscores), flush=True)
-    else:
-        print('Training Epoch: %d, Action Accuracy: %.4f' % (epoch, act_acc), flush=True)
+    #if action_flag:
+        #print('Training Epoch: %d, Action F1 Score: %.4f' % (epoch, fscores), flush=True)
+    #else:
+    print('Training Epoch: %d, Action Accuracy: %.4f' % (epoch, act_acc), flush=True)
         
             
     writer.add_scalar('Training Loss', np.mean(losses), epoch)
@@ -447,16 +447,24 @@ def val_epoch(cfg, epoch, data_loader, model, writer, use_cuda, args, action_fla
     model.eval()
 
     results = {}
+    act_results = {}
     act_acc = []
     sub_acc = []
     fscores = []
+    sub_outputs = []
+    act_outputs = []
+    updated_outputs = []
     for i, (clips, labels, action_targets, keys) in enumerate(tqdm(data_loader)):
         clips = Variable(clips.type(torch.FloatTensor))
         labels =  Variable(labels.type(torch.FloatTensor))
         action_targets =  Variable(action_targets.type(torch.FloatTensor))        
-        
-        assert len(clips) == len(labels)
-                        
+        rgb_action_list = ['1', '10', '11', '13', '15', '17', '19', '2', '20', '22', '23', '25', '28', '29', '3', '30', '31', '32', '33', '34', '35', '36', '37', '38', '39', '4', '40', '41', '42', '43', '44', '45', '46', '47', '48', '49', '5', '50', '51', '6', '7', '8', '9']
+        skeleton_action_list = ['1', '10', '11', '12', '13', '14', '15', '16', '17', '18', '19', '2', '20', '21', '22', '23', '24', '25', '26', '27', '28', '29', '3', '30', '31', '32', '33', '34', '35', '36', '37', '38', '39', '4', '40', '41', '42', '43', '44', '45', '46', '47', '48', '49', '5', '50', '51', '6', '7', '8', '9']
+        remove_actions = [x for x in skeleton_action_list if x not in rgb_action_list]
+        remove_actions_indices = [skeleton_action_list.index(x) for x in remove_actions]
+        #print(f'remove: {remove_actions}')
+        #print(remove_actions_indices)
+        assert len(clips) == len(labels)            
         
         with torch.no_grad():
             if use_cuda:
@@ -466,30 +474,30 @@ def val_epoch(cfg, epoch, data_loader, model, writer, use_cuda, args, action_fla
             if args.model_version in ['v1', 'v2', 'v3', 'v3+backbone', 'v4', 'v3_intermediate'] :
                 if args.model_version in ['v3', 'v3+backbone']:
                     output_subjects, output_actions, features, act_features, _, _ = model(clips)
-                elif args.model_version == 'v3_intermediate':
-                    output_subjects, output_actions, features, act_features, _, _, _, _ = model(clips)
+                    #print(output_actions.shape)
+                    for sample in output_actions:
+                        act_outputs.append(sample)
+#                        updated_output = sample.tolist()
+#                        for index in remove_actions_indices:
+#                            updated_output.insert(index, -100)
+#                        updated_outputs.append(updated_output)
+#                    clone = np.array(updated_outputs).astype(float)
+#                    clone = torch.from_numpy(clone).cpu()
+#                    print(clone.shape)
+#                    #print(updated_outputs)
+#                    act_outputs.append(clone)
+#                    updated_outputs.clear()
                 else:
                     output_subjects, output_actions, features, act_features = model(clips)
-                if action_flag:
-                    output_subjects = torch.argmax(output_subjects, dim=1)
-                    output_actions = torch.sigmoid(output_actions)
-                    output_actions = (output_actions > threshold).long()
-                    fscore = f1_score(action_targets.cpu(), output_actions.cpu(), average='macro')
-                    fscores.append(fscore)
-                    if i%100 ==  0:
-                        for i in range(args.batch_size):
-                            output_actions_pred = [index for index in range(len(output_actions[1])) if output_actions[i][index] == 1]
-                            action_targets_pred = [index for index in range(len(action_targets[1])) if action_targets[i][index] == 1]
-                            print(f'pred act: {output_actions_pred}, GT: {action_targets_pred}', flush=True)
-                        print(f'pred sub: {output_subjects}, GT: {labels}, fscore: {fscore}', flush=True)
-                else:
-                    output_subjects = torch.argmax(output_subjects, dim=1)
-                    output_actions = torch.argmax(output_actions, dim=1)
-                    acc = torch.sum(output_actions == action_targets)
-                    act_acc.append(acc)
+                    
+                output_subjects = torch.argmax(output_subjects, dim=1)
+                output_actions = torch.argmax(output_actions, dim=1)
+                
+                acc = torch.sum(output_actions == action_targets)
+                act_acc.append(acc)
                 if i == 3:
-                    print(output_actions, action_targets, flush=True)
-                    print(output_subjects, labels, flush=True)
+                    #print(output_actions, action_targets, flush=True)
+                    #print(output_subjects, labels, flush=True)
                     act_pred = torch.stack([acc for acc in act_acc])
                     act_acc_pred = torch.sum(act_pred) / (len(act_pred) * args.batch_size)
                     print(act_acc_pred)
@@ -522,20 +530,28 @@ def val_epoch(cfg, epoch, data_loader, model, writer, use_cuda, args, action_fla
                 if keys[i] not in results:
                     results[keys[i]] = []
                 results[keys[i]].append(feature.cpu().data.numpy())
+                
+            for i, act_feature in enumerate(act_features):
+                if keys[i] not in act_results:
+                    act_results[keys[i]] = []
+                act_results[keys[i]].append(act_feature.cpu().data.numpy())
     
     sub = torch.stack([acc for acc in sub_acc])                
     sub_acc = torch.sum(sub) / (len(sub) * args.batch_size)
-    if action_flag:
-        print(len(fscores), flush=True)
-        fscores_sum = np.sum(fscores)
-        print(f'fscores sum: {fscores_sum}', flush=True)
-        fscores = fscores_sum / (len(fscores) * args.batch_size)
-        print(f'fscores: {fscores}', flush=True)
-    else:
-        act = torch.stack([acc for acc in act_acc])
-        act_acc = torch.sum(act) / (len(act) * args.batch_size)
+#    if action_flag:
+#        print(len(fscores), flush=True)
+#        fscores_sum = np.sum(fscores)
+#        print(f'fscores sum: {fscores_sum}', flush=True)
+#        fscores = fscores_sum / (len(fscores) * args.batch_size)
+#        print(f'fscores: {fscores}', flush=True)
+#    else:
+    act = torch.stack([acc for acc in act_acc])
+    act_acc = torch.sum(act) / (len(act) * args.batch_size)
         
-    #pickle.dump(results, open('R3D.pkl', 'wb'))
+    #pickle.dump(results, open('PKsubfeatures2.pkl', 'wb'))
+    #pickle.dump(act_results, open('PKactfeatures2.pkl', 'wb'))
+    #pickle.dump(sub_outputs, open('PKsuboutputs-mapped.pkl', 'wb'))
+    #pickle.dump(act_outputs, open('PKCSactoutputs.pkl', 'wb'))
     #print('dumped', flush=True)
         
         
@@ -563,6 +579,17 @@ def val_epoch(cfg, epoch, data_loader, model, writer, use_cuda, args, action_fla
         label = np.array(label)
         print('Validation Epoch: %d, Action Accuracy: %.4f' % (epoch, act_acc), flush=True)
         print('Validation Epoch: %d, Subject Accuracy: %.4f' % (epoch, sub_acc), flush=True)
+        
+        np.save('ntu120features2.npy', feature)
+        np.save('ntu120labels2.npy', label)
+        
+        with open('ntu120seq_probe_gallery_action_keys2', 'wb') as f:
+            pickle.dump(seq_type, f)
+            pickle.dump(probe_seqs, f)
+            pickle.dump(gallery_seqs, f)
+            pickle.dump(action, f)
+            pickle.dump(list(results.keys()), f)
+            
         accuracy = compute_metric2(feature, label, action, seq_type, probe_seqs, gallery_seqs)
         top_1_accuracy = np.mean(accuracy[:, :, :, 0])
         print('Validation Epoch: %d, Top-1 Accuracy: %.4f' % (epoch, top_1_accuracy), flush=True)
@@ -588,6 +615,16 @@ def val_epoch(cfg, epoch, data_loader, model, writer, use_cuda, args, action_fla
         top_1_accuracy = np.mean(accuracy[:, :, :, 0])
         print('Validation Epoch: %d, Top-1 Accuracy: %.4f' % (epoch, top_1_accuracy), flush=True)
         print('Validation Epoch: %d, Action Accuracy: %.4f' % (epoch, act_acc), flush=True)
+        
+        #np.save('pkfeatures.npy', feature)
+        #np.save('pklabels,npy', label)
+        
+        with open('pkseq_probe_gallery_action_keys-mapped', 'wb') as f:
+            pickle.dump(seq_type, f)
+            pickle.dump(probe_seqs, f)
+            pickle.dump(gallery_seqs, f)
+            pickle.dump(action, f)
+            pickle.dump(list(results.keys()), f)
         #writer.add_scalar('Validation Top-1 Accuracy', top_1_accuracy, epoch)
         metric = top_1_accuracy
         return metric
@@ -684,6 +721,30 @@ def val_epoch(cfg, epoch, data_loader, model, writer, use_cuda, args, action_fla
             metric = top_1_accuracy
             return metric
             
+            
+    elif args.dataset == 'tennis':
+        probe_seqs = [['1', '2', '3']]
+        gallery_seqs = [['4', '6']]
+        feature, seq_type, action, label = [], [], [], []
+        for key in results.keys():
+            subject, video_id, action_id, num_frames = key.split('_')
+            label.append(subject)
+            seq_type.append('_'.join([action_id]))
+            action.append(action_id)
+            _feature = results[key]
+            feature.append(_feature)
+        feature = np.array(feature).squeeze()
+        label = np.array(label)
+        accuracy = compute_metric2(feature, label, action, seq_type, probe_seqs, gallery_seqs)
+        top_1_accuracy = np.mean(accuracy[:, :, :, 0])
+        print('Validation Epoch: %d, Top-1 Accuracy: %.4f' % (epoch, top_1_accuracy), flush=True)
+        print('Validation Epoch: %d, Action Accuracy: %.4f' % (epoch, act_acc), flush=True)
+        
+        #np.save('pkfeatures.npy', feature)
+        #np.save('pklabels,npy', label)
+        #writer.add_scalar('Validation Top-1 Accuracy', top_1_accuracy, epoch)
+        metric = top_1_accuracy
+        return metric
     else:
         raise NotImplementedError
         
@@ -864,29 +925,30 @@ def train_model(cfg, run_id, save_dir, use_cuda, args, writer):
     max_fmap_score, fmap_score = -1, -1
     # loop for each epoch
     for epoch in range(args.num_epochs):
-        model = train_epoch(epoch, train_dataloader, model, optimizer, ema_optimizer, criterion, writer, use_cuda, flag, args, accumulation_steps=args.steps, action_flag=False) #V3 Charades
+        #model = train_epoch(epoch, train_dataloader, model, optimizer, ema_optimizer, criterion, writer, use_cuda, flag, args, accumulation_steps=args.steps, action_flag=action_flag) #V3 Charades
         if epoch % args.validation_interval == 0:
             score1 = val_epoch(cfg, epoch, val_dataloader, model, None, use_cuda, args)
             fmap_score = score1
             if flag:
                 score2 = val_epoch(cfg, epoch, val_dataloader, ema_model, writer, use_cuda, args)
                 fmap_score = max(score1, score2)
+        exit()
          
-        #if fmap_score > max_fmap_score:
-        for f in os.listdir(save_dir):
-            os.remove(os.path.join(save_dir, f))
-        save_file_path = os.path.join(save_dir, 'model_{}_{:.4f}.pth'.format(epoch, fmap_score))
-        if flag:
-            save_model = model if score1 > score2 else ema_model
-        else:
-            save_model = model
-        states = {
-            'epoch': epoch + 1,
-            'state_dict': save_model.state_dict(),
-            'optimizer': optimizer.state_dict(),
-        }
-        torch.save(states, save_file_path)
-        max_fmap_score = fmap_score
+        if fmap_score > max_fmap_score:
+#        for f in os.listdir(save_dir):
+#            os.remove(os.path.join(save_dir, f))
+            save_file_path = os.path.join(save_dir, 'model_{}_{:.4f}.pth'.format(epoch, fmap_score))
+            if flag:
+                save_model = model if score1 > score2 else ema_model
+            else:
+                save_model = model
+            states = {
+                'epoch': epoch + 1,
+                'state_dict': save_model.state_dict(),
+                'optimizer': optimizer.state_dict(),
+            }
+            torch.save(states, save_file_path)
+            max_fmap_score = fmap_score
                 
                 
 def cosine_pairwise_dist(x, y):

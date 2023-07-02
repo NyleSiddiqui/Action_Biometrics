@@ -4,6 +4,7 @@ import os
 import sys
 import shutil
 import random
+import ast
 import pandas as pd
 import cv2
 import decord
@@ -156,27 +157,39 @@ class omniDataLoader(Dataset):
         self.triplets = []
         self.subject_to_videos = {}
         self.video_actions = {}
-        if self.dataset != 'mergedntupk':
-            hdf5_list = os.listdir(f'/home/siddiqui/Action_Biometrics/frame_data/{self.dataset}/')
+        if self.dataset != 'mergedntupk' and self.dataset != 'tennis':
+            hdf5_list = os.listdir(f'/home/siddiqui/Action_Biometrics-RGB/frame_data/{self.dataset}/')
+        elif self.dataset == 'pkummd':
+            hdf5_list = os.listdir('/squash/siddiqui-Action_Biometrics-RGB-pkummd-nod/')
+        elif self.dataset == 'tennis':
+            hdf5_list = 'placeholder'
         else:
-            hdf5_list = os.listdir(f'/home/siddiqui/Action_Biometrics/frame_data/ntu_rgbd_120/')
-            hdf5_list2 = os.listdir(f'/home/siddiqui/Action_Biometrics/frame_data/pkummd/')
+            hdf5_list = os.listdir(f'/home/siddiqui/Action_Biometrics-RGB/frame_data/ntu_rgbd_120/')
+            hdf5_list2 = os.listdir(f'/home/siddiqui/Action_Biometrics-RGB/frame_data/pkummd/')
             #self.blurred_model, self.bcfg = load_model()
             self.blurred_model, self.bcfg = None, None
+        print(len(hdf5_list))
         for count, row in enumerate(open(self.annotations, 'r').readlines()[1:]):
-           if len(row.split(',')) == 6:
-            if self.dataset != "afs":
-                video_id, subject, action, placeholder1, placeholder2, placeholder3 = row.split(',')
-                if self.dataset == 'charades':
-                   path = "/squash/Charades_Charades_v1_rgb/"
-                   try:
-                       placeholder1, placeholder2 = max(1, int(float(placeholder1) * 24)), min(len(os.listdir(os.path.join(path, video_id))), int(float(placeholder2) * 24))
-                   except FileNotFoundError:
-                       print(video_id, flush=True)
-                       continue
-                       
+            if len(row.split(',')) == 6 and self.dataset != 'tennis':
+                if self.dataset != "afs":
+                    video_id, subject, action, placeholder1, placeholder2, placeholder3 = row.split(',')
+                    if self.dataset == 'charades':
+                        path = "/squash/Charades_Charades_v1_rgb/"
+                        try:
+                            placeholder1, placeholder2 = max(1, int(float(placeholder1) * 24)), min(len(os.listdir(os.path.join(path, video_id))), int(float(placeholder2) * 24))
+                        except FileNotFoundError:
+                            print(video_id, flush=True)
+                            continue
             else:
-               video_id, subject, action, placeholder1, placeholder2, placeholder3 = row[0], row[1], row[2], row[3], row[4], row[5]
+                video_id, subject, action, num_frames, fps = row.split("\"")[0].split(',')[:-1]
+                if int(action) == 5:
+                    continue
+                #print(video_id, subject, action, num_frames, fps)
+                if int(num_frames) != 0: 
+                    bbs = ast.literal_eval(row.split("\"")[1])
+                else:
+                    bbs = []
+                # print(bbs, len(bbs))
                
             if self.dataset == 'charades':
                 if f'{video_id}_{subject}_{action}_{placeholder1}_{placeholder2}.hdf5' in hdf5_list:
@@ -200,7 +213,7 @@ class omniDataLoader(Dataset):
                     self.data[f"{subject}_{action}_{video_id}_{placeholder1}_{placeholder2}_{placeholder3}"].append([subject, action, video_id, placeholder1, placeholder2, placeholder3])
                     
             elif self.dataset == 'ntu_rgbd_120':
-                if f'{video_id}.hdf5' in hdf5_list:
+                if f'{video_id}.hdf5' in hdf5_list and f'A{action.zfill(3)}' not in cfg.ignore_actions:
                     if df['subject'].value_counts()[int(subject)] < 2:
                         print(row, flush=True)
                         continue
@@ -232,16 +245,39 @@ class omniDataLoader(Dataset):
                     if df['id'].value_counts()[int(subject)] < 2:
                         print('not enough samples: {row}', flush=True)
                         continue
-                    self.videos.append([video_id, subject, action, placeholder1, placeholder2, placeholder3])
-                    if subject not in self.subjects:
-                        self.subjects.append(subject)
+                    self.videos.append([video_id, int(subject)-1, action, placeholder1, placeholder2, placeholder3])
+                    if int(subject)-1 not in self.subjects:
+                        self.subjects.append(int(subject)-1)
                     if action not in self.actions:
                         self.actions.append(action)
-                    if f"{subject}_{action}_{video_id}_{placeholder1}_{placeholder2}_{placeholder3}" not in self.data:
-                        self.data[f"{subject}_{action}_{video_id}_{placeholder1}_{placeholder2}_{placeholder3}"] = []
-                    self.data[f"{subject}_{action}_{video_id}_{placeholder1}_{placeholder2}_{placeholder3}"].append([subject, action, video_id, placeholder1, placeholder2, placeholder3])
-
-        if shuffle:# and data_split == 'train':
+                    if f"{int(subject)-1}_{action}_{video_id}_{placeholder1}_{placeholder2}_{placeholder3}" not in self.data:
+                        self.data[f"{int(subject)-1}_{action}_{video_id}_{placeholder1}_{placeholder2}_{placeholder3}"] = []
+                    self.data[f"{int(subject)-1}_{action}_{video_id}_{placeholder1}_{placeholder2}_{placeholder3}"].append([int(subject)-1, action, video_id, placeholder1, placeholder2, placeholder3])
+                elif f'{video_id}_{int(subject)+8}_{action}_{placeholder1}_{placeholder2}.hdf5' in hdf5_list:
+                    if df['id'].value_counts()[int(subject)] < 2:
+                        print('not enough samples: {row}', flush=True)
+                        continue
+                    self.videos.append([video_id, int(subject)+8, action, placeholder1, placeholder2, placeholder3])
+                    if int(subject)+8 not in self.subjects:
+                        self.subjects.append(int(subject)+8)
+                    if action not in self.actions:
+                        self.actions.append(action)
+                    if f"{int(subject)+8}_{action}_{video_id}_{placeholder1}_{placeholder2}_{placeholder3}" not in self.data:
+                        self.data[f"{int(subject)+8}_{action}_{video_id}_{placeholder1}_{placeholder2}_{placeholder3}"] = []
+                    self.data[f"{int(subject)+8}_{action}_{video_id}_{placeholder1}_{placeholder2}_{placeholder3}"].append([int(subject)+8, action, video_id, placeholder1, placeholder2, placeholder3])
+                else:
+                    print(f'{video_id}_{int(subject)-1}_{action}_{placeholder1}_{placeholder2}.hdf5')
+                    
+            elif self.dataset == 'tennis':
+                self.videos.append([video_id, subject, action, num_frames, fps, bbs])
+                if subject not in self.subjects:
+                        self.subjects.append(subject)
+                if action not in self.actions:
+                    self.actions.append(action)
+                if f"{subject}_{action}_{video_id}_{num_frames}_{fps}_{bbs}" not in self.data:
+                    self.data[f"{subject}_{action}_{video_id}_{num_frames}_{fps}_{bbs}"] = []
+                self.data[f"{subject}_{action}_{video_id}_{num_frames}_{fps}_{bbs}"].append([subject, action, video_id, num_frames, fps, bbs])
+        if shuffle and data_split == 'train':
             random.shuffle(self.videos)
             
         if data_percentage != 1.0:
@@ -253,7 +289,7 @@ class omniDataLoader(Dataset):
         print(self.actions, flush=True)
         self.actions = sorted(self.actions)
         print(self.actions, flush=True)
-        print(len(self.actions), flush=True)
+        print(len(self.subjects), len(self.actions), flush=True)
         self.height = height
         self.width = width
         self.skip = skip
@@ -470,52 +506,46 @@ class omniDataLoader(Dataset):
                 else:
                     return frames, subject, action, '_'.join([str(subject), video_id, str(action), str(p1), str(p2), video_id[-1]])
             
-        elif self.dataset == "small_ntu_rgbd_120":
+        elif self.dataset == 'tennis':
             if self.flag:
-                anchor, sa, ss = self.triplets[index]
+                anchor = self.videos[index]
+                #print(f'anchor: {anchor}', flush=True)
+                video_id, sub, act, num_frames, fps, bbs = anchor[0], anchor[1], anchor[2], anchor[3], anchor[4], anchor[5]
+                #print(f'anchor breakdown: {video_id, sub, act, p1, p2, p3}', flush=True)
+                row = [sub, act, video_id, num_frames, fps, bbs]
+                sa = random.choice([diff_sub for diff_sub in self.data.keys() if diff_sub.split("_")[1] == act and diff_sub.split("_")[0] != sub])
+                #print(f'sa: {sa}', flush=True)
+                ss = random.choice([diff_sub for diff_sub in self.data.keys() if diff_sub.split("_")[1] != act and diff_sub.split("_")[0] == sub])
+                #print(f'ss: {ss}', flush=True)
                 
-                if anchor not in self.cache:
-                  row = random.choice(self.data[anchor])
-                  video_id, camera, rep, setup = row[0], row[3], row[4], row[5]
-                  anchor_frames = frame_creation(row, self.dataset, self.videos_folder, self.height, self.width, self.num_frames, self.transform)
-                  self.cache[anchor] = [anchor_frames, video_id, camera, rep, setup]
-                else:
-                    anchor_frames, video_id, camera, rep, setup = self.cache[anchor][0], self.cache[anchor][1], self.cache[anchor][2], self.cache[anchor][3], self.cache[anchor][4]  
-                    
-                if sa not in self.cache:
-                    row = random.choice(self.data[sa])
-                    sa_video_id, sa_camera, sa_rep, sa_setup = row[0], row[3], row[4], row[5]
-                    sa_frames = frame_creation(row, self.dataset, self.videos_folder, self.height, self.width, self.num_frames, self.transform)
-                    self.cache[sa] = [sa_frames, sa_video_id, sa_camera, sa_rep, sa_setup]
-                else:
-                    sa_frames = self.cache[sa][0]
-                    
-                if ss not in self.cache:
-                    row = random.choice(self.data[ss])
-                    ss_video_id, ss_camera, ss_rep, ss_setup = row[0], row[3], row[4], row[5]
-                    ss_frames = frame_creation(row, self.dataset, self.videos_folder, self.height, self.width, self.num_frames, self.transform)
-                    self.cache[ss] = [ss_frames, ss_video_id, ss_camera, ss_rep, ss_setup]
-                else:
-                    ss_frames = self.cache[ss][0]
-                    
-                remove = []
-                if len(self.cache.keys()) > 3:
-                    for key in self.cache.keys():
-                        if key not in [anchor, sa, ss]:
-                            remove.append(key)
-                for k in remove:
-                    self.cache.pop(k)
-                    
-                subject = self.subjects.index(anchor.split("_")[0])
-                action = self.actions.index(anchor.split("_")[1])
-                return anchor_frames, ss_frames, sa_frames, subject, action, '_'.join([video_id[8:12], video_id[0:4], video_id[4:8], video_id[12:16], video_id[16:20]])
+                anchor_frames = frame_creation(row, self.dataset, self.videos_folder, self.height, self.width, self.num_frames, self.transform)
+                
+                row = random.choice(self.data[sa])
+                #print(f'row: {row}', flush=True)
+                sa_sub, sa_act, sa_video_id, sa_num_frames, sa_fps, sa_bbs = row[0], row[1], row[2], row[3], row[4], row[5]
+                sa_frames = frame_creation(row, self.dataset, self.videos_folder, self.height, self.width, self.num_frames, self.transform)
+                
+                row2 = random.choice(self.data[ss])
+                #print(f'row2: {row2}', flush=True)
+                ss_sub, ss_act, ss_video_id, ss_num_frames, ss_fps, ss_bbs =  row2[0], row2[1], row2[2], row2[3], row2[4], row2[5]
+                ss_frames = frame_creation(row2, self.dataset, self.videos_folder, self.height, self.width, self.num_frames, self.transform)
+                
+                #print(f'anchor: {anchor}, sa: {row}, ss: {row2}', flush=True)
+              
+                subject = self.subjects.index(sub)
+                action = self.actions.index(act)
+                
+                return anchor_frames, ss_frames, sa_frames, subject, action, '_'.join([str(subject), video_id, str(action), str(num_frames)])
+            
             else:
-                row = self.videos[index]
-                video_id, subject, action = row[0], row[1], row[2]
-                camera, rep, setup = row[3], row[4], row[5]
+                anchor = self.videos[index]
+                #print(anchor)
+                video_id, sub, act, num_frames, fps, bbs = anchor[0], anchor[1], anchor[2], anchor[3], anchor[4], anchor[5]
+                row = [sub, act, video_id, num_frames, fps, bbs]
                 frames = frame_creation(row, self.dataset, self.videos_folder, self.height, self.width, self.num_frames, self.transform)
-                action = self.actions.index(action)       
-                subject = self.subjects.index(subject)
+                action = self.actions.index(act)       
+                subject = self.subjects.index(sub)
+                return frames, subject, action, '_'.join([str(subject), video_id, str(action), str(num_frames)])
                 
             
 def frame_creation(row, dataset, videos_folder, height, width, num_frames, transform, blurred_model=None, bcfg=None):
@@ -626,7 +656,7 @@ def frame_creation(row, dataset, videos_folder, height, width, num_frames, trans
     elif dataset == "pkummd":
         list32 = []
         subject, action, video_id, start_frame, end_frame = row[0], row[1], row[2], int(row[3]), int(row[4])
-        frames = h5py.File(os.path.join('/home/siddiqui/Action_Biometrics/frame_data/pkummd', f'{video_id}_{int(subject)-1}_{action}_{start_frame}_{end_frame}.hdf5'), 'r')
+        frames = h5py.File(os.path.join('/squash/siddiqui-Action_Biometrics-RGB-pkummd-nod/', f'{video_id}_{int(subject)}_{action}_{start_frame}_{end_frame}.hdf5'), 'r')
         frames = frames['default'][:]
         frames = torch.from_numpy(frames).float()
         
@@ -718,23 +748,66 @@ def frame_creation(row, dataset, videos_folder, height, width, num_frames, trans
         #torch.save(frames, 'blurred_final.pt')
         return frames
         
-    elif dataset == "small_ntu_rgbd_120":
-        video_id = row[0]
-        #start = timeit.default_timer()
-        with h5py.File(f'/home/siddiqui/Action_Biometrics/frame_data/NTU/{video_id}.hdf5', 'r') as f:
-            frames = f['default'][:]
-            frames = torch.from_numpy(frames)
-            frames = frames.type(torch.float32)
-        #if transform:
-            #print(frames.shape, video_id, flush=True)
-            #frames = transform(frames)
-        #print(f'video load time {timeit.default_timer() - start}', flush=True)
+    elif dataset == "tennis":
+        video_id = row[2]
+        
+        fps = int(row[-2])
+        # print(fps)
+        fps10_frames = []
+        vr = VideoReader(f'/home/siddiqui/Action_Biometrics-RGB/frame_data/tennis/{video_id}/{video_id}.mp4', height=height, width=width) 
+        vid_num_frames = int(row[3])
+        if vid_num_frames == 0:
+            vid_num_frames = len(vr)
+        #print(vid_num_frames)
+            
+        #vr = VideoReader('/home/siddiqui/S3A1x1.mp4', height=height, width=width) 
+        # vr = cv2.VideoCapture('/home/siddiqui/S3A1x1.mp4')
+        # ret, frame = vr.read()
+        # while vr.isOpened() and ret:
+        #     print(ret)
+        #     ret, frame = vr.read()
+        #     fps10_frames.append(frame)
+        #     cv2.waitKey(100)
+        # vr.release()
+        # cv2.destroyAllWindows()
+        # print(len(fps10_frames))
+        # exit()
+        # vr.set(cv2.CAP_PROP_FPS,30) 
+        # length = int(vr.get(cv2.CAP_PROP_FRAME_COUNT))
+        
+        # print( length ) 
+        # exit()    
+        # print(len(vr))
+        # fps_vid = vr.get_avg_fps()
+        # print(fps_vid)
+        # fps_vid /= 3
+        # print(fps_vid)
+        frame_ids = np.linspace(0, vid_num_frames-1, 16).astype(int)
+        # print(frame_ids)
+        #if fps == 10:
+        #    frame_ids *= 3
+        # print(frame_ids)
+        frames = vr.get_batch(frame_ids)
+        # print(frames.shape)
+        frames = frames.permute(0, 3, 1, 2)
+        # print(frames.shape)
+        frames = frames.type(torch.float32)
+        # torch.save(frames, 'tennis.pt')
+        for i in range(frames.shape[0]):
+            frames[i] = frames[i] / 255.
+        #print(f'division time {timeit.default_timer() - start}', flush=True)
+        
+        if transform:
+            frames = frames.transpose(0, 1)
+            frames = transform(frames)
+            frames = frames.transpose(0, 1)
+        # torch.save(frames, 'transform_tennis.pt')
         return frames
         
         
 if __name__ == '__main__':
     shuffle = False
-    cfg = build_config('Pcharades')
+    cfg = build_config('tennis')
     transform_train = Compose(
                 [
                     Normalize([0.45, 0.45, 0.45], [0.225, 0.225, 0.225]),
@@ -755,15 +828,15 @@ if __name__ == '__main__':
                     CenterCrop(224)
                 ]
             )
-    frames = frames = h5py.File('/home/siddiqui/Action_Biometrics/frame_data/ntu_rgbd_120/S001C001P001R001A010_rgb.avi.hdf5')
-    frames = frames['default'][()]
-    print(frames.shape)
-    net, bcfg = load_model()
-    blur = torch_blur(frames, net, bcfg)
-    torch.save(blur, 'blurdr.pt')
+#    frames = frames = h5py.File('/home/siddiqui/Action_Biometrics/frame_data/ntu_rgbd_120/S001C001P001R001A010_rgb.avi.hdf5')
+#    frames = frames['default'][()]
+#    print(frames.shape)
+#    net, bcfg = load_model()
+#    blur = torch_blur(frames, net, bcfg)
+#    torch.save(blur, 'blurdr.pt')
 
     data_generator = omniDataLoader(cfg, 'rgb', 'test', 1.0, 16, skip=0, shuffle=shuffle, transform=transform_test, flag=False, multi_action=False)
-    dataloader = DataLoader(data_generator, batch_size=4, num_workers=0, shuffle=False, collate_fn=val_collate)
+    dataloader = DataLoader(data_generator, batch_size=4, num_workers=6, shuffle=False, collate_fn=val_collate)
     
     for (clips, targets, actions, keys) in tqdm(dataloader):
         print(clips.shape)
